@@ -1,0 +1,116 @@
+syntax = "proto3";
+
+package ci.v1;
+
+option go_package = "github.com/ci-system/proto/ci/v1;civ1";
+
+import "ci/v1/common.proto";
+import "google/protobuf/timestamp.proto";
+
+// WebhookService receives git provider webhooks (GitHub, GitLab).
+// This is an HTTP/JSON endpoint, not gRPC — but we define the internal
+// representation here so the scm library converts provider-specific
+// payloads into these canonical types.
+//
+// The actual HTTP handler lives in cmd/master. These types are used
+// internally between the webhook handler and the scheduler.
+
+// SCMEvent is the canonical representation of a git provider event.
+// The scm library converts GitHub/GitLab payloads into this.
+message SCMEvent {
+  string id = 1;                // unique event id (for dedup)
+  SCMProvider provider = 2;
+  google.protobuf.Timestamp received_at = 3;
+
+  oneof event {
+    PushEvent push = 4;
+    PullRequestEvent pull_request = 5;
+    CommentEvent comment = 6;
+  }
+}
+
+enum SCMProvider {
+  SCM_PROVIDER_UNSPECIFIED = 0;
+  SCM_PROVIDER_GITHUB = 1;
+  SCM_PROVIDER_GITLAB = 2;
+}
+
+message PushEvent {
+  string repo_url = 1;
+  string repo_full_name = 2;   // e.g. "org/repo"
+  string ref = 3;               // e.g. "refs/heads/main"
+  string before_sha = 4;
+  string after_sha = 5;
+  string pusher = 6;
+  repeated Commit commits = 7;
+}
+
+message PullRequestEvent {
+  string repo_url = 1;
+  string repo_full_name = 2;
+  string action = 3;            // opened, synchronize, closed, reopened
+  uint32 number = 4;
+  string title = 5;
+  string head_sha = 6;
+  string head_branch = 7;
+  string base_branch = 8;
+  string author = 9;
+}
+
+message CommentEvent {
+  string repo_url = 1;
+  string repo_full_name = 2;
+  uint32 pr_number = 3;
+  string body = 4;              // comment text, e.g. "/retry", "/skip-tests"
+  string author = 5;
+  string head_sha = 6;
+}
+
+message Commit {
+  string sha = 1;
+  string message = 2;
+  string author = 3;
+  repeated string added = 4;
+  repeated string modified = 5;
+  repeated string removed = 6;
+}
+
+// --- Status Reporting (our system → GitHub/GitLab) ---
+
+// These are not gRPC services — they define the interface the scm library
+// implements to report build status back to the git provider.
+
+// StatusReport is sent to the git provider when build/task state changes.
+message StatusReport {
+  SCMProvider provider = 1;
+  string repo_full_name = 2;
+  string commit_sha = 3;
+  StatusState state = 4;
+  string context = 5;          // e.g. "ci/unit-tests", "ci/lint"
+  string description = 6;      // e.g. "Unit tests passed in 34s"
+  string target_url = 7;       // link to build details in our web UI
+}
+
+enum StatusState {
+  STATUS_STATE_UNSPECIFIED = 0;
+  STATUS_STATE_PENDING = 1;
+  STATUS_STATE_RUNNING = 2;
+  STATUS_STATE_SUCCESS = 3;
+  STATUS_STATE_FAILURE = 4;
+  STATUS_STATE_ERROR = 5;
+}
+
+// WebhookConfig defines how a repository is connected to our CI system.
+// Stored in the master's database.
+message WebhookConfig {
+  string id = 1;
+  string repo_full_name = 2;
+  SCMProvider provider = 3;
+  string webhook_secret = 4;       // HMAC secret for verification
+  string access_token = 5;         // for cloning + status reporting
+  string pipeline_file = 6;       // default "pipeline.py"
+  repeated string trigger_branches = 7; // empty = all branches
+  bool trigger_on_pr = 8;
+  bool trigger_on_push = 9;
+  google.protobuf.Timestamp created_at = 10;
+}

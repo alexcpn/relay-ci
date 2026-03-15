@@ -1,0 +1,87 @@
+syntax = "proto3";
+
+package ci.v1;
+
+option go_package = "github.com/ci-system/proto/ci/v1;civ1";
+
+import "google/protobuf/timestamp.proto";
+
+// --- Identifiers ---
+
+message PipelineID {
+  string id = 1; // uuid
+}
+
+message BuildID {
+  string id = 1; // uuid
+}
+
+message TaskID {
+  string id = 1; // uuid
+}
+
+message WorkerID {
+  string id = 1; // hostname or uuid
+}
+
+// --- Enums ---
+
+enum TaskState {
+  TASK_STATE_UNSPECIFIED = 0;
+  TASK_STATE_PENDING = 1;
+  TASK_STATE_SCHEDULED = 2;
+  TASK_STATE_RUNNING = 3;
+  TASK_STATE_PASSED = 4;
+  TASK_STATE_FAILED = 5;
+  TASK_STATE_SKIPPED = 6;
+  TASK_STATE_CANCELLED = 7;
+  TASK_STATE_TIMED_OUT = 8;
+}
+
+enum BuildState {
+  BUILD_STATE_UNSPECIFIED = 0;
+  BUILD_STATE_QUEUED = 1;
+  BUILD_STATE_RUNNING = 2;
+  BUILD_STATE_PASSED = 3;
+  BUILD_STATE_FAILED = 4;
+  BUILD_STATE_CANCELLED = 5;
+}
+
+// --- Common Types ---
+
+message GitSource {
+  string repo_url = 1;
+  string commit_sha = 2;
+  string branch = 3;
+  string pr_number = 4;       // empty if push, set if PR
+  string base_branch = 5;     // target branch for PRs
+  string clone_token = 6;     // short-lived token for cloning
+}
+
+message ResourceRequirements {
+  uint32 cpu_millicores = 1;   // e.g. 2000 = 2 cores
+  uint32 memory_mb = 2;
+  uint32 disk_mb = 3;
+  uint32 timeout_seconds = 4;
+}
+
+message TaskResult {
+  TaskID task_id = 1;
+  TaskState state = 2;
+  int32 exit_code = 3;
+  google.protobuf.Timestamp started_at = 4;
+  google.protobuf.Timestamp finished_at = 5;
+  string error_message = 6;
+  repeated Artifact artifacts = 7;
+}
+
+message Artifact {
+  string name = 1;
+  string path = 2;            // path in artifact store
+  string content_hash = 3;    // sha256
+  uint64 size_bytes = 4;
+}
+
+message Labels {
+  map<string, string> labels = 1;
+}

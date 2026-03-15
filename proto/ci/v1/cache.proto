@@ -1,0 +1,179 @@
+syntax = "proto3";
+
+package ci.v1;
+
+option go_package = "github.com/ci-system/proto/ci/v1;civ1";
+
+import "google/protobuf/timestamp.proto";
+
+// CacheService provides distributed caching for build artifacts,
+// dependency caches, and intermediate outputs.
+// Called by: workers (get/put during task execution).
+service CacheService {
+  // Check if a cache entry exists without downloading it.
+  rpc Has(CacheHasRequest) returns (CacheHasResponse);
+
+  // Download a cached entry. Streams bytes for large entries.
+  rpc Get(CacheGetRequest) returns (stream CacheGetResponse);
+
+  // Upload a cache entry. Streams bytes for large entries.
+  rpc Put(stream CachePutRequest) returns (CachePutResponse);
+
+  // Delete a cache entry (e.g. invalidation).
+  rpc Delete(CacheDeleteRequest) returns (CacheDeleteResponse);
+
+  // Get cache statistics (hit rate, size, etc.).
+  rpc Stats(CacheStatsRequest) returns (CacheStatsResponse);
+}
+
+// ArtifactService stores build outputs — binaries, test reports, images.
+// Separate from cache because artifacts are permanent, cache is evictable.
+service ArtifactService {
+  // Upload a build artifact.
+  rpc Upload(stream ArtifactUploadRequest) returns (ArtifactUploadResponse);
+
+  // Download a build artifact.
+  rpc Download(ArtifactDownloadRequest) returns (stream ArtifactDownloadResponse);
+
+  // List artifacts for a build.
+  rpc List(ArtifactListRequest) returns (ArtifactListResponse);
+
+  // Get a signed URL for direct download (for web UI / external access).
+  rpc GetDownloadURL(GetDownloadURLRequest) returns (GetDownloadURLResponse);
+}
+
+// --- Cache ---
+
+message CacheHasRequest {
+  string key = 1;  // content-addressable hash
+}
+
+message CacheHasResponse {
+  bool exists = 1;
+  uint64 size_bytes = 2;
+  google.protobuf.Timestamp created_at = 3;
+}
+
+message CacheGetRequest {
+  string key = 1;
+}
+
+message CacheGetResponse {
+  oneof data {
+    CacheEntryMetadata metadata = 1;  // first message
+    bytes chunk = 2;                   // subsequent messages
+  }
+}
+
+message CacheEntryMetadata {
+  string key = 1;
+  uint64 size_bytes = 2;
+  string content_hash = 3;
+  google.protobuf.Timestamp created_at = 4;
+}
+
+message CachePutRequest {
+  oneof data {
+    CachePutMetadata metadata = 1;    // first message
+    bytes chunk = 2;                   // subsequent messages
+  }
+}
+
+message CachePutMetadata {
+  string key = 1;
+  uint64 size_bytes = 2;
+  string content_hash = 3;           // for integrity verification
+  uint32 ttl_seconds = 4;            // 0 = default TTL
+}
+
+message CachePutResponse {
+  bool stored = 1;
+  bool deduplicated = 2;  // true if content already existed (same hash)
+}
+
+message CacheDeleteRequest {
+  string key = 1;
+}
+
+message CacheDeleteResponse {}
+
+message CacheStatsRequest {}
+
+message CacheStatsResponse {
+  uint64 total_entries = 1;
+  uint64 total_size_bytes = 2;
+  uint64 hits = 3;
+  uint64 misses = 4;
+  float hit_rate_percent = 5;
+  uint64 evictions = 6;
+}
+
+// --- Artifacts ---
+
+message ArtifactUploadRequest {
+  oneof data {
+    ArtifactUploadMetadata metadata = 1;
+    bytes chunk = 2;
+  }
+}
+
+message ArtifactUploadMetadata {
+  string build_id = 1;
+  string task_id = 2;
+  string name = 3;
+  string content_hash = 4;
+  uint64 size_bytes = 5;
+  string content_type = 6; // e.g. "application/java-archive", "text/xml"
+}
+
+message ArtifactUploadResponse {
+  string path = 1;  // storage path for reference
+}
+
+message ArtifactDownloadRequest {
+  string build_id = 1;
+  string name = 2;
+}
+
+message ArtifactDownloadResponse {
+  oneof data {
+    ArtifactDownloadMetadata metadata = 1;
+    bytes chunk = 2;
+  }
+}
+
+message ArtifactDownloadMetadata {
+  string name = 1;
+  uint64 size_bytes = 2;
+  string content_hash = 3;
+  string content_type = 4;
+}
+
+message ArtifactListRequest {
+  string build_id = 1;
+  string task_id = 2;  // optional, filter by task
+}
+
+message ArtifactListResponse {
+  repeated ArtifactEntry artifacts = 1;
+}
+
+message ArtifactEntry {
+  string name = 1;
+  string path = 2;
+  uint64 size_bytes = 3;
+  string content_hash = 4;
+  string content_type = 5;
+  google.protobuf.Timestamp created_at = 6;
+}
+
+message GetDownloadURLRequest {
+  string build_id = 1;
+  string name = 2;
+  uint32 expires_in_seconds = 3; // default 300 (5 min)
+}
+
+message GetDownloadURLResponse {
+  string url = 1;
+  google.protobuf.Timestamp expires_at = 2;
+}

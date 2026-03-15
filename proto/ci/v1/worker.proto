@@ -1,0 +1,128 @@
+syntax = "proto3";
+
+package ci.v1;
+
+option go_package = "github.com/ci-system/proto/ci/v1;civ1";
+
+import "ci/v1/common.proto";
+import "google/protobuf/timestamp.proto";
+
+// WorkerService runs on each worker. Called by the master to assign tasks.
+service WorkerService {
+  // Assign a task to this worker for execution.
+  rpc AssignTask(AssignTaskRequest) returns (AssignTaskResponse);
+
+  // Cancel a running task on this worker.
+  rpc CancelTask(CancelTaskRequest) returns (CancelTaskResponse);
+}
+
+// WorkerRegistryService runs on the master. Workers call this to register
+// and maintain their presence.
+service WorkerRegistryService {
+  // Worker registers itself with the master on startup.
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+
+  // Worker sends periodic heartbeats. Bidirectional stream so master
+  // can also push urgent commands (cancel, drain).
+  rpc Heartbeat(stream HeartbeatRequest) returns (stream HeartbeatResponse);
+
+  // Worker reports a task has completed (passed, failed, timed out).
+  rpc ReportTaskResult(ReportTaskResultRequest) returns (ReportTaskResultResponse);
+}
+
+// --- Worker Service (master → worker) ---
+
+message AssignTaskRequest {
+  TaskID task_id = 1;
+  BuildID build_id = 2;
+  string task_name = 3;
+  string container_image = 4;
+  repeated string commands = 5;
+  GitSource source = 6;
+  ResourceRequirements resources = 7;
+  map<string, string> env = 8;
+  repeated CacheMount cache_mounts = 9;
+  repeated string secret_refs = 10;  // secret names to fetch from vault
+}
+
+message AssignTaskResponse {
+  bool accepted = 1;
+  string reject_reason = 2; // e.g. "insufficient resources"
+}
+
+message CancelTaskRequest {
+  TaskID task_id = 1;
+  string reason = 2;
+}
+
+message CancelTaskResponse {}
+
+// --- Worker Registry (worker → master) ---
+
+message RegisterRequest {
+  WorkerID worker_id = 1;
+  WorkerCapacity capacity = 2;
+  repeated string supported_platforms = 3; // e.g. "linux/amd64", "linux/arm64"
+  map<string, string> labels = 4;
+}
+
+message RegisterResponse {
+  bool accepted = 1;
+}
+
+message WorkerCapacity {
+  uint32 total_cpu_millicores = 1;
+  uint32 available_cpu_millicores = 2;
+  uint32 total_memory_mb = 3;
+  uint32 available_memory_mb = 4;
+  uint32 total_disk_mb = 5;
+  uint32 available_disk_mb = 6;
+  uint32 running_tasks = 7;
+  uint32 max_tasks = 8;
+}
+
+message HeartbeatRequest {
+  WorkerID worker_id = 1;
+  WorkerCapacity capacity = 2;
+  repeated RunningTask running_tasks = 3;
+  google.protobuf.Timestamp timestamp = 4;
+}
+
+message RunningTask {
+  TaskID task_id = 1;
+  BuildID build_id = 2;
+  google.protobuf.Timestamp started_at = 3;
+  float cpu_usage_percent = 4;
+  uint32 memory_usage_mb = 5;
+}
+
+message HeartbeatResponse {
+  oneof command {
+    DrainCommand drain = 1;         // stop accepting tasks, finish current
+    CancelTaskCommand cancel = 2;   // kill a specific task
+  }
+}
+
+message DrainCommand {
+  string reason = 1;
+}
+
+message CancelTaskCommand {
+  TaskID task_id = 1;
+  string reason = 2;
+}
+
+message ReportTaskResultRequest {
+  WorkerID worker_id = 1;
+  TaskResult result = 2;
+}
+
+message ReportTaskResultResponse {}
+
+// --- Shared ---
+
+message CacheMount {
+  string cache_key = 1;       // content-addressable key
+  string mount_path = 2;      // where to mount in container, e.g. "/root/.m2"
+  bool read_only = 3;
+}

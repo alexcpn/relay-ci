@@ -1,0 +1,143 @@
+syntax = "proto3";
+
+package ci.v1;
+
+option go_package = "github.com/ci-system/proto/ci/v1;civ1";
+
+import "ci/v1/common.proto";
+import "google/protobuf/timestamp.proto";
+
+// SchedulerService is the main entry point for submitting and managing builds.
+// Called by: CLI, webhook handler, web UI.
+service SchedulerService {
+  // Submit a new build from a git source. Master clones the repo,
+  // parses pipeline definition, builds the DAG, and starts scheduling.
+  rpc SubmitBuild(SubmitBuildRequest) returns (SubmitBuildResponse);
+
+  // Cancel a running build. All in-flight tasks are killed.
+  rpc CancelBuild(CancelBuildRequest) returns (CancelBuildResponse);
+
+  // Retry a failed build. Re-runs failed tasks only (passed tasks are skipped).
+  rpc RetryBuild(RetryBuildRequest) returns (RetryBuildResponse);
+
+  // Get current state of a build including all task states.
+  rpc GetBuild(GetBuildRequest) returns (GetBuildResponse);
+
+  // List builds with filtering.
+  rpc ListBuilds(ListBuildsRequest) returns (ListBuildsResponse);
+
+  // Stream build state changes in real time.
+  rpc WatchBuild(WatchBuildRequest) returns (stream BuildEvent);
+}
+
+// --- Submit ---
+
+message SubmitBuildRequest {
+  GitSource source = 1;
+  string pipeline_file = 2;   // path to pipeline definition, default "pipeline.py"
+  map<string, string> env = 3; // additional env vars
+  string triggered_by = 4;    // "webhook", "cli", "api", username
+  Labels labels = 5;
+}
+
+message SubmitBuildResponse {
+  BuildID build_id = 1;
+}
+
+// --- Cancel ---
+
+message CancelBuildRequest {
+  BuildID build_id = 1;
+  string reason = 2;
+}
+
+message CancelBuildResponse {}
+
+// --- Retry ---
+
+message RetryBuildRequest {
+  BuildID build_id = 1;
+  bool from_scratch = 2; // if true, re-run all tasks, not just failed
+}
+
+message RetryBuildResponse {
+  BuildID build_id = 1; // new build id
+}
+
+// --- Get ---
+
+message GetBuildRequest {
+  BuildID build_id = 1;
+}
+
+message GetBuildResponse {
+  Build build = 1;
+}
+
+message Build {
+  BuildID build_id = 1;
+  GitSource source = 2;
+  BuildState state = 3;
+  repeated Task tasks = 4;
+  google.protobuf.Timestamp created_at = 5;
+  google.protobuf.Timestamp started_at = 6;
+  google.protobuf.Timestamp finished_at = 7;
+  string triggered_by = 8;
+  Labels labels = 9;
+}
+
+message Task {
+  TaskID task_id = 1;
+  string name = 2;
+  TaskState state = 3;
+  repeated TaskID depends_on = 4;
+  ResourceRequirements resources = 5;
+  string container_image = 6;
+  repeated string commands = 7;
+  WorkerID assigned_worker = 8;
+  TaskResult result = 9;
+}
+
+// --- List ---
+
+message ListBuildsRequest {
+  string repo_url = 1;       // filter by repo
+  string branch = 2;         // filter by branch
+  BuildState state = 3;      // filter by state
+  int32 limit = 4;           // default 20
+  string cursor = 5;         // pagination
+}
+
+message ListBuildsResponse {
+  repeated Build builds = 1;
+  string next_cursor = 2;
+}
+
+// --- Watch ---
+
+message WatchBuildRequest {
+  BuildID build_id = 1;
+}
+
+message BuildEvent {
+  BuildID build_id = 1;
+  google.protobuf.Timestamp timestamp = 2;
+
+  oneof event {
+    BuildStateChanged build_state_changed = 3;
+    TaskStateChanged task_state_changed = 4;
+  }
+}
+
+message BuildStateChanged {
+  BuildState previous = 1;
+  BuildState current = 2;
+}
+
+message TaskStateChanged {
+  TaskID task_id = 1;
+  string task_name = 2;
+  TaskState previous = 3;
+  TaskState current = 4;
+  TaskResult result = 5; // set when terminal state
+}

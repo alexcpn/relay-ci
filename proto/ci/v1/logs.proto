@@ -1,0 +1,66 @@
+syntax = "proto3";
+
+package ci.v1;
+
+option go_package = "github.com/ci-system/proto/ci/v1;civ1";
+
+import "ci/v1/common.proto";
+import "google/protobuf/timestamp.proto";
+
+// LogService handles real-time log streaming and log retrieval.
+// Workers push logs during task execution. Clients stream logs in real time.
+service LogService {
+  // Worker pushes log lines as they're produced. Streamed so we don't
+  // buffer entire task output in memory.
+  rpc PushLogs(stream PushLogRequest) returns (PushLogResponse);
+
+  // Stream logs for a task in real time. If the task is still running,
+  // the stream stays open and delivers new lines as they appear.
+  rpc StreamLogs(StreamLogsRequest) returns (stream LogLine);
+
+  // Get logs for a completed task (batch, not streaming).
+  rpc GetLogs(GetLogsRequest) returns (GetLogsResponse);
+}
+
+message PushLogRequest {
+  TaskID task_id = 1;
+  BuildID build_id = 2;
+  WorkerID worker_id = 3;
+  repeated LogLine lines = 4;
+}
+
+message PushLogResponse {}
+
+message StreamLogsRequest {
+  BuildID build_id = 1;
+  TaskID task_id = 2;     // optional — if empty, stream all tasks in build
+  bool follow = 3;         // if true, keep stream open for running tasks
+  int64 since_line = 4;    // resume from line number (0 = start)
+}
+
+message LogLine {
+  TaskID task_id = 1;
+  int64 line_number = 2;
+  google.protobuf.Timestamp timestamp = 3;
+  string content = 4;
+  LogStream stream = 5;
+}
+
+enum LogStream {
+  LOG_STREAM_UNSPECIFIED = 0;
+  LOG_STREAM_STDOUT = 1;
+  LOG_STREAM_STDERR = 2;
+  LOG_STREAM_SYSTEM = 3;  // internal messages (task started, image pulled, etc.)
+}
+
+message GetLogsRequest {
+  BuildID build_id = 1;
+  TaskID task_id = 2;
+  int64 offset = 3;      // start from line
+  int64 limit = 4;        // max lines (0 = all)
+}
+
+message GetLogsResponse {
+  repeated LogLine lines = 1;
+  int64 total_lines = 2;
+}
