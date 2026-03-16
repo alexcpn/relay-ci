@@ -1,6 +1,6 @@
-# Quick Start Guide
+# Relay CI — Quick Start Guide
 
-Get the CI system running on Linux and trigger a build from a GitHub repo.
+Get Relay CI running on Linux and trigger a build from a GitHub repo.
 
 ## 1. Build
 
@@ -247,7 +247,7 @@ Add to `~/.config/claude_desktop_config.json` (Linux) or `~/Library/Application 
 ```json
 {
   "mcpServers": {
-    "ci-system": {
+    "relay-ci": {
       "command": "/ssd/ideas/new_ci_system/bin/ci-mcp",
       "env": {
         "CI_MASTER": "localhost:9090"

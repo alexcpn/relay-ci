@@ -1,202 +1,339 @@
-# CI System
+# Relay CI
 
-A distributed, DAG-based, containerized CI system built in Go. Pipelines are defined as code, tasks execute in ephemeral containers on bare metal with maximum parallelism, and the system reports build status back to GitHub/GitLab.
+**Relay CI** — A fast, parallel, AI-native CI system designed from the ground up for Agentic Workflows.
+
+Relay CI is a distributed, DAG-based, containerised CI system built in Go. Pipelines execute in parallel across ephemeral containers, build status is reported back to GitHub/GitLab, and every part of the system is reachable by AI agents via a built-in MCP server — so agents can monitor builds, diagnose failures, suggest fixes, enforce code policies, and trigger retries without human intervention.
+
+→ **[Quick Start Guide](QuickStart.md)** — get master, worker, and MCP server running in 5 minutes.
+
+---
+
+## Why Relay CI?
+
+Most CI systems were built for humans reading dashboards. Relay CI is built for the world where AI agents are part of the engineering loop.
+
+| Traditional CI | Relay CI |
+|---|---|
+| Humans read logs to find failures | Agents call `diagnose_build` and get structured failure analysis |
+| Humans retry failed builds | Agents call `retry_build` after auto-applying a fix |
+| Humans check code quality manually | Agents run `suggest_fix` and open PRs with corrections |
+| Build results live in a web UI | Build results are a first-class API callable by any MCP client |
+| CI config is opaque to LLMs | `pipeline.yml` is plain YAML, readable and writable by agents |
+
+---
+
+## MCP Server — AI Agent Integration
+
+Relay CI ships with a built-in **MCP (Model Context Protocol) server** that exposes the entire CI system as a set of tools callable by any MCP-compatible AI agent (Claude, GPT-4, custom agents, etc.).
+
+### What agents can do
+
+**Monitor builds in real time**
+```
+Agent: "Are there any failing builds right now?"
+→ get_failed_builds() → structured summary of failures with task-level detail
+```
+
+**Diagnose failures automatically**
+```
+Agent: "Why did build abc123 fail?"
+→ diagnose_build(build_id) → which tasks failed, error logs, dependency chain,
+                              skipped downstream tasks
+```
+
+**Suggest and apply fixes**
+```
+Agent: "Fix the failing lint task in build abc123"
+→ suggest_fix(build_id, task_id) → error type, file:line references,
+                                    corrective action
+→ Agent edits the code, pushes a fix, retries the build
+```
+
+**Enforce code policies**
+```
+Agent running on every PR:
+  1. submit_build() → trigger pipeline
+  2. watch_build()  → wait for completion
+  3. diagnose_build() → extract lint/security findings
+  4. Post review comments with exact file:line violations
+  5. Block merge if policy thresholds exceeded
+```
+
+**Auto-fix and re-run**
+```
+Agent workflow:
+  1. Build fails on lint errors
+  2. Agent reads logs via get_task_logs()
+  3. Agent applies fix to source code
+  4. Agent calls retry_build() → only failed tasks re-run
+  5. Build passes → PR is approved
+```
+
+**Code review assistance**
+```
+Agent: "Review the diff in this PR for security issues"
+→ submit_build() → triggers security scanner (trivy, gosec, semgrep)
+→ get_task_logs() → returns structured scanner findings
+→ Agent posts inline PR comments with severity and remediation advice
+```
+
+### MCP Tools
+
+| Tool | Description |
+|---|---|
+| `submit_build` | Trigger a build for any repo/branch/commit |
+| `get_build` | Full build status with all task states, exit codes, durations |
+| `list_builds` | List builds, filterable by state |
+| `watch_build` | Poll build progress as a percentage |
+| `get_task_logs` | Fetch stdout/stderr/system logs for any task |
+| `diagnose_build` | Structured failure analysis — failed tasks, error lines, skipped dependents |
+| `suggest_fix` | Analyse a failed task and return error type, location, and fix recommendation |
+| `get_failed_builds` | All currently failed builds with failure summaries |
+| `retry_build` | Re-run failed tasks only (or full rebuild from scratch) |
+| `cancel_build` | Kill a running build |
+
+### Running the MCP Server
+
+```bash
+# HTTP mode — remote agents connect over the network
+MCP_HTTP_ADDR=:8081 CI_MASTER=localhost:9090 ./bin/ci-mcp
+
+# stdio mode — local MCP clients (Claude Desktop, etc.)
+CI_MASTER=localhost:9090 ./bin/ci-mcp
+```
+
+Configure in Claude Desktop (`~/.claude/claude_desktop_config.json`):
+```json
+{
+  "mcpServers": {
+    "relay-ci": {
+      "url": "http://localhost:8081/mcp"
+    }
+  }
+}
+```
+
+---
 
 ## Architecture
 
 ```
-Developer opens PR
-       │
-       ▼
-GitHub/GitLab webhook POST ──► ci-master /webhooks
-       │
-       ▼
-  SCM parses event ──► DAG engine builds graph ──► Scheduler assigns tasks
-       │                                                    │
-       ▼                                              ┌─────┴─────┐
-  Status reported                                     ▼           ▼
-  back to GitHub                                 worker-1     worker-N
-  (✅ / ❌ on PR)                                    │           │
-                                                 containerd  containerd
-                                                 /Firecracker /Firecracker
+Developer opens PR / Agent calls submit_build
+              │
+              ▼
+   ┌─────────────────────┐
+   │      ci-master      │
+   │  ┌───────────────┐  │
+   │  │  MCP Server   │◄─┼── AI Agents (Claude, GPT-4, custom)
+   │  └───────┬───────┘  │
+   │          │          │
+   │  ┌───────▼───────┐  │
+   │  │   Scheduler   │  │
+   │  │  + DAG Engine │  │
+   │  └───────┬───────┘  │
+   └──────────┼──────────┘
+              │  gRPC task assignment
+    ┌─────────┴──────────┐
+    ▼                    ▼
+ci-worker-1          ci-worker-N
+    │                    │
+Docker container    Docker container
+(ephemeral, cached  (ephemeral, cached
+ /workspace volume)  /workspace volume)
+    │                    │
+    └────────┬───────────┘
+             ▼
+     Logs streamed back to master
+     Status reported to GitHub/GitLab
 ```
 
-### Deployable Services
+### Key design principles
+
+- **DAG-based execution** — tasks declare dependencies; independent tasks run in parallel automatically
+- **Shared workspace volume** — all tasks in a build share `/workspace` via a named Docker volume; no inter-task file copying
+- **Cache volumes** — Go module cache, npm, pip, trivy DB etc. persist across builds as named Docker volumes
+- **Agent-first API** — every operation is a gRPC call or MCP tool, not a web UI click
+- **Pipeline as code** — `pipeline.yml` in the repo root; no vendor lock-in
+
+---
+
+## Services
 
 | Service | Binary | Description |
 |---|---|---|
-| **ci-master** | `cmd/master` | API gateway, scheduler, DAG engine, webhook receiver |
-| **ci-worker** | `cmd/worker` | Task execution, container lifecycle, log streaming |
-| **ci-cli** | `cmd/cli` | Command-line client for submitting builds, viewing status |
+| **ci-master** | `cmd/master` | API gateway, scheduler, DAG engine, webhook receiver, log store |
+| **ci-worker** | `cmd/worker` | Task execution in Docker containers, cache volume management, log streaming |
+| **ci-mcp** | `cmd/mcp` | MCP server (stdio + HTTP) exposing CI operations as agent tools |
+| **ci-cli** | `cmd/cli` | Command-line client for humans |
 
-### Shared Libraries
-
-| Package | Description |
-|---|---|
-| `pkg/dag` | DAG construction, topological sort, cycle detection, task state machine |
-| `pkg/scheduler` | Bin-packing task assignment, build lifecycle, dead worker handling |
-| `pkg/worker` | Worker registry, capacity tracking, heartbeat monitoring |
-| `pkg/scm` | GitHub/GitLab webhook parsing, HMAC verification, commit status reporting |
-| `pkg/container` | Container runtime interface (containerd/Firecracker), mock runtime for testing |
-| `pkg/logstore` | Log storage with real-time streaming via subscribers |
-| `pkg/secrets` | Scoped secret store, log scrubbing, env var masking |
-
-## Project Structure
-
-```
-ci-system/
-├── README.md
-├── Makefile                      # make proto / make build / make test
-├── go.mod
-├── go.sum
-│
-├── proto/ci/v1/                  # Protobuf definitions (source of truth)
-│   ├── common.proto              #   Shared types: IDs, enums, GitSource, TaskResult
-│   ├── scheduler.proto           #   SchedulerService (6 RPCs)
-│   ├── worker.proto              #   WorkerService + WorkerRegistryService (5 RPCs)
-│   ├── cache.proto               #   CacheService + ArtifactService (9 RPCs)
-│   ├── logs.proto                #   LogService (3 RPCs)
-│   ├── secrets.proto             #   SecretsService (4 RPCs)
-│   └── webhook.proto             #   SCMEvent types, StatusReport, WebhookConfig
-│
-├── gen/ci/v1/                    # Generated Go code (do not edit)
-│   ├── *.pb.go                   #   Protobuf message types
-│   └── *_grpc.pb.go              #   gRPC client/server stubs
-│
-├── cmd/
-│   ├── master/                   # ci-master binary
-│   │   ├── main.go               #   Server startup, scheduling loop, graceful shutdown
-│   │   ├── grpc_scheduler.go     #   SchedulerService gRPC implementation
-│   │   ├── grpc_worker.go        #   WorkerRegistryService gRPC implementation
-│   │   ├── grpc_logs.go          #   LogService gRPC implementation
-│   │   └── webhook.go            #   HTTP webhook handler (GitHub/GitLab → scheduler)
-│   │
-│   ├── worker/                   # ci-worker binary
-│   │   └── main.go               #   Worker registration, heartbeat loop
-│   │
-│   └── cli/                      # ci-cli binary
-│       └── main.go               #   submit, status, list, cancel, logs, watch commands
-│
-├── pkg/
-│   ├── dag/                      # DAG engine
-│   │   ├── task.go               #   Task struct, state machine (8 states), transitions
-│   │   ├── graph.go              #   Graph: add/validate/schedule/complete, cycle detection
-│   │   └── graph_test.go         #   12 tests
-│   │
-│   ├── scheduler/                # Task scheduler
-│   │   ├── scheduler.go          #   Build management, bin-packing, dead worker handling
-│   │   └── scheduler_test.go     #   8 tests
-│   │
-│   ├── worker/                   # Worker registry
-│   │   ├── registry.go           #   Registration, heartbeat, capacity tracking, drain
-│   │   └── registry_test.go      #   11 tests
-│   │
-│   ├── scm/                      # Source control integration
-│   │   ├── types.go              #   Canonical event types, StatusReport, WebhookConfig
-│   │   ├── provider.go           #   WebhookParser + StatusReporter interfaces
-│   │   ├── github.go             #   GitHub: webhook parsing, HMAC-SHA256, Commit Status API
-│   │   ├── github_test.go        #   5 tests
-│   │   ├── gitlab.go             #   GitLab: webhook parsing, secret token, Status API
-│   │   ├── gitlab_test.go        #   6 tests
-│   │   └── router.go             #   Auto-detect provider from request headers
-│   │
-│   ├── container/                # Container runtime
-│   │   ├── runtime.go            #   Runtime + Container interfaces, ContainerConfig
-│   │   ├── mock.go               #   MockRuntime for testing (configurable exit codes/output)
-│   │   ├── runner.go             #   Runner: pull → create → start → wait → collect logs
-│   │   └── runner_test.go        #   8 tests
-│   │
-│   ├── logstore/                 # Log storage + streaming
-│   │   ├── store.go              #   Append, Get (batch), Subscribe (real-time), Complete
-│   │   └── store_test.go         #   9 tests
-│   │
-│   ├── secrets/                  # Secret management
-│   │   ├── store.go              #   Scoped secret store, Scrubber, ScrubEnv
-│   │   └── store_test.go         #   13 tests
-│   │
-│   └── observability/            # (placeholder) OTel, Prometheus, structured logging
-│
-├── test/
-│   └── integration/              # Integration tests
-│       └── full_pipeline_test.go  #   5 tests: full pipeline, status reporting,
-│                                  #   parallel builds, worker failure, log streaming
-│
-└── internal/                     # (placeholder) Shared internal helpers
-```
-
-## gRPC Services
-
-| Service | Proto | Runs on | RPCs |
-|---|---|---|---|
-| `SchedulerService` | `scheduler.proto` | master | SubmitBuild, CancelBuild, RetryBuild, GetBuild, ListBuilds, WatchBuild |
-| `WorkerService` | `worker.proto` | worker | AssignTask, CancelTask |
-| `WorkerRegistryService` | `worker.proto` | master | Register, Heartbeat, ReportTaskResult |
-| `CacheService` | `cache.proto` | cache node | Has, Get, Put, Delete, Stats |
-| `ArtifactService` | `cache.proto` | cache node | Upload, Download, List, GetDownloadURL |
-| `LogService` | `logs.proto` | master | PushLogs, StreamLogs, GetLogs |
-| `SecretsService` | `secrets.proto` | master | GetSecrets, PutSecret, DeleteSecret, ListSecrets |
+---
 
 ## Quick Start
 
-### Prerequisites
-
-- Go 1.24+
-- `protoc` with `protoc-gen-go` and `protoc-gen-go-grpc`
-
-### Build
+### Single machine (all services)
 
 ```bash
-make proto    # generate Go code from .proto files
-make build    # build ci-master, ci-worker, ci-cli binaries
-make test     # run all tests
+./run.sh          # build + start master, worker, mcp
+./run.sh stop     # stop all
+./run.sh restart  # rebuild + restart
+./run.sh status   # show running processes and PIDs
+./run.sh logs     # tail all logs together
 ```
 
-### Run
+Services start on:
+- `localhost:9090` — master gRPC
+- `localhost:8080` — master HTTP (webhooks, log viewer)
+- `localhost:8081` — MCP HTTP (`/mcp` endpoint)
+
+### Manual
 
 ```bash
-# Terminal 1: start master
-./bin/ci-master
+make build                        # build all binaries
 
-# Terminal 2: start worker
-MASTER_ADDR=localhost:9090 ./bin/ci-worker
+./bin/ci-master                   # start master
+MASTER_ADDR=localhost:9090 \
+WORKER_ADDR=:9091 \
+  ./bin/ci-worker                 # start worker
 
-# Terminal 3: submit a build
-./bin/ci-cli submit https://github.com/myorg/myrepo.git --branch main
+MCP_HTTP_ADDR=:8081 \
+CI_MASTER=localhost:9090 \
+  ./bin/ci-mcp                    # start MCP server (HTTP mode)
+```
+
+### CLI
+
+```bash
+./bin/ci-cli submit https://github.com/org/repo.git --branch main
 ./bin/ci-cli list
 ./bin/ci-cli status <build-id>
 ./bin/ci-cli logs <build-id> <task-id> --follow
+./bin/ci-cli cancel <build-id>
 ```
 
-### Webhook Setup
+---
 
-Add a webhook to your GitHub/GitLab repository:
+## Pipeline Configuration
 
-- **URL:** `https://your-ci-server.com/webhooks`
+Drop a `pipeline.yml` in your repo root:
+
+```yaml
+name: my-service
+
+defaults:
+  image: golang:1.24
+  env:
+    CI: "true"
+
+tasks:
+  - id: clone
+    image: alpine/git:latest
+    commands:
+      - git clone --depth=1 $REPO_URL /workspace
+      - cd /workspace && git checkout $COMMIT_SHA
+
+  - id: build
+    commands:
+      - go build ./...
+    depends_on: [clone]
+
+  - id: test
+    commands:
+      - go test ./...
+    depends_on: [clone]
+    cache:
+      - key: gomod
+        path: /root/go/pkg/mod
+
+integrations:
+  linters:
+    enabled: true
+    tools:
+      - name: golangci-lint   # auto-wired after clone, 2GB RAM, cached
+
+  security:
+    enabled: true
+    tools:
+      - name: trivy           # vuln DB cached across builds
+        severity: HIGH,CRITICAL
+        fail_on_findings: true
+
+triggers:
+  branches: [main, master]
+  pull_requests: true
+```
+
+### Built-in integrations
+
+| Integration | Tools | Auto-cached |
+|---|---|---|
+| Linters | `golangci-lint`, `eslint`, `ruff`, `pylint`, `rubocop`, `shellcheck`, `hadolint` | Go modules, npm, pip |
+| Security | `trivy`, `grype`, `semgrep`, `gosec` | Vuln DBs |
+| Quality | `sonarqube` | — |
+
+---
+
+## Webhook Setup
+
+```
+GitHub/GitLab → POST /webhooks → master parses event → pipeline triggered
+                                                      ↓
+                                          ✅/❌ status on PR commit
+```
+
+Add a webhook to your repository:
+- **URL:** `https://your-relay-ci.com/webhooks`
 - **Events:** `push`, `pull_request` (GitHub) or `Push Hook`, `Merge Request Hook` (GitLab)
-- **Secret:** Set `WEBHOOK_SECRET` env var on the master
+- **Secret:** set `WEBHOOK_SECRET` env var on the master
 
-Build status appears as checks on PRs — no GitHub Actions required.
+---
+
+## End-to-End Tests
+
+```bash
+# Run against a live master + worker
+CI_E2E=1 go test ./test/e2e/... -v -timeout 10m
+
+# Against a specific master
+CI_E2E=1 CI_MASTER=192.168.1.10:9090 go test ./test/e2e/... -v -timeout 10m
+```
+
+---
 
 ## Test Summary
 
 ```
-pkg/dag           12 tests   DAG operations, cycle detection, state machine
-pkg/worker        11 tests   Registry, heartbeat, capacity, drain
-pkg/scheduler      8 tests   Scheduling, bin-packing, failure cascade, dead workers
-pkg/scm           11 tests   GitHub + GitLab webhook parsing, signature verification, status API
-pkg/logstore       9 tests   Append, pagination, real-time streaming, completion
-pkg/secrets       13 tests   Scoped storage, scrubbing, env masking
-pkg/container      8 tests   Mock runtime, success/failure, timeout, cleanup
-test/integration   5 tests   Full pipeline end-to-end with all modules
-                  ──
-                  77 total
+pkg/dag              12 tests   DAG construction, cycle detection, state machine
+pkg/worker           11 tests   Registry, heartbeat, capacity tracking, drain
+pkg/scheduler         8 tests   Bin-packing, failure cascade, dead worker handling
+pkg/scm              11 tests   GitHub + GitLab webhook parsing, HMAC, status API
+pkg/logstore          9 tests   Append, pagination, real-time streaming
+pkg/secrets          13 tests   Scoped storage, log scrubbing, env masking
+pkg/container         8 tests   Mock runtime, success/failure, timeout, cleanup
+pkg/pipeline          7 tests   YAML parsing, DAG construction, integration tasks
+test/integration      5 tests   Full pipeline end-to-end with all modules
+cmd/master            3 tests   Pipeline fetch from real git repo
+cmd/worker            1 test    Docker entrypoint override (requires Docker)
+test/e2e              1 test    Live build against real GitHub repo (CI_E2E=1)
+                     ──
+                     89 total
 ```
 
-## Build Phases
+---
+
+## Roadmap
 
 | Phase | Scope | Status |
 |---|---|---|
-| **Phase 1: Single-node MVP** | DAG engine, scheduler, container execution, CLI, webhooks | **In progress** |
-| Phase 2: Distribution | NATS task queue, remote workers, shared cache (MinIO) | Planned |
-| Phase 3: Security & Production | Firecracker isolation, Vault, mTLS, audit logging | Planned |
-| Phase 4: AI/Agent Integration | MCP server, pipeline-as-code SDK, agent APIs | Planned |
+| **Phase 1: Single-node** | DAG engine, scheduler, Docker execution, CLI, webhooks, MCP server | **Complete** |
+| **Phase 2: Distribution** | NATS task queue, remote workers, shared MinIO cache | Planned |
+| **Phase 3: Security** | Firecracker VM isolation, Vault secrets, mTLS, audit logging | Planned |
+| **Phase 4: Agent Workflows** | Agent-triggered pipelines, auto-fix loops, policy enforcement SDK | Planned |
+
+---
+
+## Origins
+
+This project was generated by [Claude Code](https://claude.ai/code) using a Plan → Generate → Test methodology:
+
+- **[Engineering Principles](claude.md)** — Software Engineering 3.0 guidelines for AI-native delivery
+- **[Initial Plan](initial_plan.md)** — Architecture and implementation plan produced before a single line of code was written
