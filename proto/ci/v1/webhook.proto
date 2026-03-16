@@ -4,7 +4,6 @@ package ci.v1;
 
 option go_package = "github.com/ci-system/proto/ci/v1;civ1";
 
-import "ci/v1/common.proto";
 import "google/protobuf/timestamp.proto";
 
 // WebhookService receives git provider webhooks (GitHub, GitLab).
