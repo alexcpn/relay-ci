@@ -43,6 +43,15 @@ func (d *dispatcher) dispatch(a scheduler.TaskAssignment) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	pbCaches := make([]*pb.CacheMount, len(a.Task.CacheMounts))
+	for i, cm := range a.Task.CacheMounts {
+		pbCaches[i] = &pb.CacheMount{
+			CacheKey:  cm.CacheKey,
+			MountPath: cm.MountPath,
+			ReadOnly:  cm.ReadOnly,
+		}
+	}
+
 	resp, err := client.AssignTask(ctx, &pb.AssignTaskRequest{
 		TaskId:         &pb.TaskID{Id: a.Task.ID},
 		BuildId:        &pb.BuildID{Id: a.BuildID},
@@ -51,6 +60,7 @@ func (d *dispatcher) dispatch(a scheduler.TaskAssignment) error {
 		Commands:       a.Task.Commands,
 		Env:            a.Task.Env,
 		SecretRefs:     a.Task.SecretRefs,
+		CacheMounts:    pbCaches,
 		Resources: &pb.ResourceRequirements{
 			CpuMillicores:  a.Task.CPUMillicores,
 			MemoryMb:       a.Task.MemoryMB,

@@ -159,15 +159,23 @@ func addLinterTasks(g *dag.Graph, cfg *Config) error {
 			return fmt.Errorf("unknown linter %q and no image specified", tool.Name)
 		}
 
+		// Linters (especially golangci-lint) are memory-hungry; use at least
+		// 2GB regardless of the pipeline default.
+		lintMemory := cfg.Defaults.MemoryMB
+		if lintMemory < 2048 {
+			lintMemory = 2048
+		}
+
 		task := &dag.Task{
 			ID:             taskID,
 			Name:           "lint: " + tool.Name,
 			ContainerImage: image,
 			Commands:       commandsForLinter(tool),
 			CPUMillicores:  cfg.Defaults.CPUMillicores,
-			MemoryMB:       cfg.Defaults.MemoryMB,
+			MemoryMB:       lintMemory,
 			DiskMB:         cfg.Defaults.DiskMB,
-			TimeoutSeconds: 300, // 5 min for linters
+			TimeoutSeconds: 600, // 10 min for linters on large repos
+			CacheMounts:    defaultCachesForLinter(tool.Name),
 		}
 
 		if err := g.AddTask(task); err != nil {
@@ -255,6 +263,7 @@ func addSecurityTasks(g *dag.Graph, cfg *Config) error {
 			MemoryMB:       1024, // scanners need more memory
 			DiskMB:         cfg.Defaults.DiskMB,
 			TimeoutSeconds: 600,
+			CacheMounts:    defaultCachesForScanner(tool.Name),
 		}
 
 		if err := g.AddTask(task); err != nil {

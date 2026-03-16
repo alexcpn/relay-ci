@@ -161,6 +161,31 @@ func (e *executor) runInDocker(ctx context.Context, req *pb.AssignTaskRequest, t
 	// sets entrypoint=git, which would intercept "sh -c ...").
 	args = append(args, "--entrypoint", "sh")
 
+	// Mount a named volume shared across all tasks in this build so the
+	// clone task's /workspace is visible to build/test/lint tasks.
+	// Docker creates the volume automatically on first use.
+	args = append(args, "--volume", "ci-workspace-"+buildID+":/workspace")
+
+	// Mount cache volumes declared by the task (e.g. Go module cache,
+	// npm cache, trivy DB). Volume names are derived from the cache key
+	// so the same key reuses the same volume across builds.
+	// Docker creates volumes automatically on first use.
+	for _, cm := range req.CacheMounts {
+		if cm.MountPath == "" {
+			continue
+		}
+		// Sanitise the cache key into a valid Docker volume name.
+		volName := "ci-cache-" + sanitiseVolumeName(cm.CacheKey)
+		mount := volName + ":" + cm.MountPath
+		if cm.ReadOnly {
+			mount += ":ro"
+		}
+		args = append(args, "--volume", mount)
+	}
+
+	// All tasks run from /workspace where the repo was cloned.
+	args = append(args, "--workdir", "/workspace")
+
 	// Image.
 	args = append(args, req.ContainerImage)
 
@@ -263,6 +288,20 @@ func (e *executor) cancelTask(taskID string) {
 	if cancel, ok := e.runningTasks[taskID]; ok {
 		cancel()
 	}
+}
+
+// sanitiseVolumeName converts an arbitrary cache key into a valid Docker
+// volume name (alphanumeric, dash, underscore only).
+func sanitiseVolumeName(key string) string {
+	var b strings.Builder
+	for _, r := range key {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			b.WriteRune(r)
+		} else {
+			b.WriteRune('-')
+		}
+	}
+	return b.String()
 }
 
 func isDockerNotAvailable(err error) bool {

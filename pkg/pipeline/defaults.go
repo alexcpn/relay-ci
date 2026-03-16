@@ -1,5 +1,11 @@
 package pipeline
 
+import (
+	"strings"
+
+	"github.com/ci-system/ci/pkg/dag"
+)
+
 // Default images for built-in integrations.
 var defaultImages = map[string]string{
 	// Linters
@@ -22,18 +28,57 @@ var defaultImages = map[string]string{
 }
 
 // Default commands for built-in tools.
-var defaultCommands = map[string][]string{
-	"golangci-lint": {"golangci-lint", "run", "--timeout=5m"},
-	"eslint":        {"npx", "eslint", "."},
-	"ruff":          {"ruff", "check", "."},
-	"pylint":        {"pylint", "."},
-	"rubocop":       {"rubocop"},
-	"shellcheck":    {"sh", "-c", "find . -name '*.sh' -exec shellcheck {} +"},
-	"hadolint":      {"sh", "-c", "find . -name 'Dockerfile*' -exec hadolint {} +"},
-	"trivy":         {"trivy", "fs", "--severity", "HIGH,CRITICAL", "."},
-	"grype":         {"grype", "dir:."},
-	"semgrep":       {"semgrep", "scan", "--config=auto", "."},
-	"gosec":         {"gosec", "./..."},
+// Each value is a complete shell command string (not individual args).
+// Multiple commands per tool can be added as additional slice elements.
+var defaultCommands = map[string]string{
+	"golangci-lint": "golangci-lint run --timeout=5m",
+	"eslint":        "npx eslint .",
+	"ruff":          "ruff check .",
+	"pylint":        "pylint .",
+	"rubocop":       "rubocop",
+	"shellcheck":    "find . -name '*.sh' -exec shellcheck {} +",
+	"hadolint":      "find . -name 'Dockerfile*' -exec hadolint {} +",
+	"trivy":         "trivy fs --severity HIGH,CRITICAL .",
+	"grype":         "grype dir:.",
+	"semgrep":       "semgrep scan --config=auto .",
+	"gosec":         "gosec ./...",
+}
+
+// defaultCachesForLinter returns cache mounts for a linter tool so that
+// package managers and analysis caches persist across builds.
+func defaultCachesForLinter(name string) []dag.CacheMount {
+	switch name {
+	case "golangci-lint":
+		return []dag.CacheMount{
+			{CacheKey: "gomod", MountPath: "/root/go/pkg/mod"},
+			{CacheKey: "golangci-lint-cache", MountPath: "/root/.cache/golangci-lint"},
+		}
+	case "eslint":
+		return []dag.CacheMount{
+			{CacheKey: "npm", MountPath: "/root/.npm"},
+		}
+	case "ruff", "pylint":
+		return []dag.CacheMount{
+			{CacheKey: "pip", MountPath: "/root/.cache/pip"},
+		}
+	}
+	return nil
+}
+
+// defaultCachesForScanner returns cache mounts for a security scanner.
+func defaultCachesForScanner(name string) []dag.CacheMount {
+	switch name {
+	case "trivy":
+		// Trivy downloads a ~200MB vulnerability DB on first run.
+		return []dag.CacheMount{
+			{CacheKey: "trivy-db", MountPath: "/root/.cache/trivy"},
+		}
+	case "grype":
+		return []dag.CacheMount{
+			{CacheKey: "grype-db", MountPath: "/root/.cache/grype"},
+		}
+	}
+	return nil
 }
 
 // imageForTool returns the container image for a tool, using the
@@ -48,7 +93,8 @@ func imageForTool(name, override string) string {
 	return ""
 }
 
-// commandsForLinter builds the command for a linter tool.
+// commandsForLinter builds the shell command string for a linter tool.
+// Returns a single-element []string containing the full shell command.
 func commandsForLinter(tool LinterTool) []string {
 	if len(tool.Args) > 0 {
 		return tool.Args
@@ -59,30 +105,29 @@ func commandsForLinter(tool LinterTool) []string {
 		return []string{tool.Name}
 	}
 
-	cmd := make([]string, len(base))
-	copy(cmd, base)
+	cmd := base
 
 	if tool.Config != "" {
 		switch tool.Name {
 		case "golangci-lint":
-			cmd = append(cmd, "--config="+tool.Config)
+			cmd += " --config=" + tool.Config
 		case "eslint":
-			cmd = append(cmd, "--config", tool.Config)
+			cmd += " --config " + tool.Config
 		case "ruff":
-			cmd = append(cmd, "--config="+tool.Config)
+			cmd += " --config=" + tool.Config
 		}
 	}
 
 	if len(tool.Paths) > 0 {
-		// Replace the default "." with specific paths.
-		cmd = cmd[:len(cmd)-1]
-		cmd = append(cmd, tool.Paths...)
+		// Replace the trailing "." with the specified paths.
+		cmd = cmd[:len(cmd)-1] + strings.Join(tool.Paths, " ")
 	}
 
-	return cmd
+	return []string{cmd}
 }
 
-// commandsForScanner builds the command for a security scanner.
+// commandsForScanner builds the shell command string for a security scanner.
+// Returns a single-element []string containing the full shell command.
 func commandsForScanner(tool SecurityTool) []string {
 	if len(tool.Args) > 0 {
 		return tool.Args
@@ -93,44 +138,39 @@ func commandsForScanner(tool SecurityTool) []string {
 		return []string{tool.Name}
 	}
 
-	cmd := make([]string, len(base))
-	copy(cmd, base)
+	cmd := base
 
 	if tool.Severity != "" && tool.Name == "trivy" {
-		// Replace default severity.
-		for i, arg := range cmd {
-			if arg == "HIGH,CRITICAL" {
-				cmd[i] = tool.Severity
-			}
-		}
+		cmd = strings.Replace(cmd, "HIGH,CRITICAL", tool.Severity, 1)
 	}
 
 	if tool.FailOnFindings && tool.Name == "trivy" {
-		cmd = append(cmd, "--exit-code=1")
+		cmd += " --exit-code=1"
 	}
 
-	return cmd
+	return []string{cmd}
 }
 
-// commandsForSonar builds the sonar-scanner command.
+// commandsForSonar builds the sonar-scanner shell command string.
+// Returns a single-element []string containing the full shell command.
 func commandsForSonar(cfg *SonarQubeConfig) []string {
-	cmd := []string{
-		"sonar-scanner",
-		"-Dsonar.host.url=" + cfg.ServerURL,
-		"-Dsonar.projectKey=" + cfg.ProjectKey,
-		"-Dsonar.token=$SONAR_TOKEN",
-	}
+	cmd := "sonar-scanner" +
+		" -Dsonar.host.url=" + cfg.ServerURL +
+		" -Dsonar.projectKey=" + cfg.ProjectKey +
+		" -Dsonar.token=$SONAR_TOKEN"
 
 	if cfg.Sources != "" {
-		cmd = append(cmd, "-Dsonar.sources="+cfg.Sources)
+		cmd += " -Dsonar.sources=" + cfg.Sources
 	}
 	if cfg.Exclusions != "" {
-		cmd = append(cmd, "-Dsonar.exclusions="+cfg.Exclusions)
+		cmd += " -Dsonar.exclusions=" + cfg.Exclusions
 	}
 	if cfg.QualityGate {
-		cmd = append(cmd, "-Dsonar.qualitygate.wait=true")
+		cmd += " -Dsonar.qualitygate.wait=true"
+	}
+	for _, arg := range cfg.ExtraArgs {
+		cmd += " " + arg
 	}
 
-	cmd = append(cmd, cfg.ExtraArgs...)
-	return cmd
+	return []string{cmd}
 }

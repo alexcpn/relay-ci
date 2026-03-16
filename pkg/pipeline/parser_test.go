@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -206,7 +207,7 @@ integrations:
 	// Check command includes quality gate.
 	hasQG := false
 	for _, cmd := range sonar.Commands {
-		if cmd == "-Dsonar.qualitygate.wait=true" {
+		if strings.Contains(cmd, "-Dsonar.qualitygate.wait=true") {
 			hasQG = true
 		}
 	}
@@ -260,7 +261,7 @@ integrations:
 	// Trivy should have --exit-code=1 for fail_on_findings.
 	hasExitCode := false
 	for _, cmd := range trivy.Commands {
-		if cmd == "--exit-code=1" {
+		if strings.Contains(cmd, "--exit-code=1") {
 			hasExitCode = true
 		}
 	}
