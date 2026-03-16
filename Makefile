@@ -17,6 +17,7 @@ build: proto
 	go build -o bin/ci-master ./cmd/master
 	go build -o bin/ci-worker ./cmd/worker
 	go build -o bin/ci-cli ./cmd/cli
+	go build -o bin/ci-mcp ./cmd/mcp
 
 # Run tests
 test:

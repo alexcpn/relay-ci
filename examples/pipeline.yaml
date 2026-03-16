@@ -1,0 +1,112 @@
+# pipeline.yaml — drop this in your repo root.
+# The CI system reads it automatically on push/PR events.
+
+name: my-go-service
+
+# Defaults inherited by all tasks unless overridden.
+defaults:
+  image: golang:1.24
+  env:
+    CI: "true"
+    CGO_ENABLED: "0"
+  cpu: 1000           # millicores (1000 = 1 core)
+  memory_mb: 512
+  disk_mb: 2000
+  timeout: 600         # seconds
+
+# When to trigger this pipeline.
+triggers:
+  branches: [main, develop]
+  pull_requests: true
+  paths:              # only trigger if these files change
+    - "**/*.go"
+    - "go.mod"
+    - "Dockerfile"
+
+# Pipeline tasks — dependencies form the DAG automatically.
+tasks:
+  - id: clone
+    image: alpine/git:latest
+    commands:
+      - git clone --depth=1 $REPO_URL /workspace
+      - cd /workspace && git checkout $COMMIT_SHA
+
+  - id: compile
+    commands:
+      - go build ./...
+    depends_on: [clone]
+    cache:
+      - key: go-mod-{{ checksum "go.sum" }}
+        path: /go/pkg/mod
+
+  - id: test
+    commands:
+      - go test -race -coverprofile=coverage.out ./...
+    depends_on: [clone]
+    cache:
+      - key: go-mod-{{ checksum "go.sum" }}
+        path: /go/pkg/mod
+        readonly: true
+    artifacts:
+      - name: coverage
+        path: coverage.out
+
+  - id: docker-build
+    image: docker:buildkit
+    commands:
+      - docker build -t myapp:$COMMIT_SHA .
+    depends_on: [compile, test]
+    cpu: 2000
+    memory_mb: 2048
+
+  - id: push
+    image: docker:latest
+    commands:
+      - echo $DOCKER_PASSWORD | docker login -u $DOCKER_USER --password-stdin
+      - docker push myapp:$COMMIT_SHA
+    depends_on: [docker-build]
+    secrets: [DOCKER_USER, DOCKER_PASSWORD]
+
+# ---------- Integrations ----------
+# These generate additional tasks wired into the DAG automatically.
+
+integrations:
+
+  # Linters — run in parallel after clone.
+  linters:
+    enabled: true
+    tools:
+      - name: golangci-lint
+        config: .golangci.yml           # path to config in repo
+
+      - name: hadolint                   # Dockerfile linting
+
+      # Custom linter example:
+      # - name: eslint
+      #   image: node:22-slim
+      #   args: ["npx", "eslint", "--max-warnings=0", "src/"]
+
+  # SonarQube — runs after compile+test (needs coverage data).
+  sonarqube:
+    enabled: true
+    server_url: https://sonar.example.com
+    project_key: my-go-service
+    token_secret: SONAR_TOKEN           # secret name in CI system
+    quality_gate: true                   # fail build if quality gate fails
+    sources: .
+    exclusions: "**/*_test.go,**/vendor/**"
+    # extra_args:
+    #   - "-Dsonar.go.coverage.reportPaths=coverage.out"
+
+  # Security scanning — runs in parallel after clone.
+  security:
+    enabled: true
+    tools:
+      - name: trivy
+        severity: HIGH,CRITICAL
+        fail_on_findings: true
+
+      - name: gosec
+
+      # - name: semgrep
+      # - name: grype

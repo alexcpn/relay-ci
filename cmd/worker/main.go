@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
 	"runtime"
@@ -23,11 +24,13 @@ func main() {
 
 	masterAddr := envOrDefault("MASTER_ADDR", "localhost:9090")
 	workerID := envOrDefault("WORKER_ID", hostname())
+	workerAddr := envOrDefault("WORKER_ADDR", ":9091")
 	maxTasks := uint32(runtime.NumCPU())
 
 	logger.Info("worker starting",
 		"master", masterAddr,
 		"worker_id", workerID,
+		"listen", workerAddr,
 		"max_tasks", maxTasks,
 	)
 
@@ -40,23 +43,44 @@ func main() {
 	defer conn.Close()
 
 	registryClient := pb.NewWorkerRegistryServiceClient(conn)
+	logClient := pb.NewLogServiceClient(conn)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Register with master.
+	// Create the task executor.
+	exec := newExecutor(registryClient, logClient, workerID, logger)
+
+	// Start the worker's gRPC server (master calls this to assign tasks).
+	workerGRPC := grpc.NewServer()
+	pb.RegisterWorkerServiceServer(workerGRPC, newWorkerServer(exec, logger))
+
+	go func() {
+		lis, err := net.Listen("tcp", workerAddr)
+		if err != nil {
+			logger.Error("failed to listen", "addr", workerAddr, "err", err)
+			os.Exit(1)
+		}
+		logger.Info("worker gRPC server starting", "addr", workerAddr)
+		if err := workerGRPC.Serve(lis); err != nil {
+			logger.Error("worker gRPC server error", "err", err)
+		}
+	}()
+
+	// Register with master (include our gRPC address so master can reach us).
 	_, err = registryClient.Register(ctx, &pb.RegisterRequest{
 		WorkerId: &pb.WorkerID{Id: workerID},
 		Capacity: &pb.WorkerCapacity{
 			TotalCpuMillicores:     uint32(runtime.NumCPU()) * 1000,
 			AvailableCpuMillicores: uint32(runtime.NumCPU()) * 1000,
-			TotalMemoryMb:          8192, // TODO: detect actual memory
+			TotalMemoryMb:          8192,
 			AvailableMemoryMb:      8192,
 			TotalDiskMb:            50000,
 			AvailableDiskMb:        50000,
 			MaxTasks:               maxTasks,
 		},
 		SupportedPlatforms: []string{runtime.GOOS + "/" + runtime.GOARCH},
+		Labels:             map[string]string{"addr": workerAddr},
 	})
 	if err != nil {
 		logger.Error("failed to register with master", "err", err)
@@ -74,6 +98,7 @@ func main() {
 
 	logger.Info("worker shutting down")
 	cancel()
+	workerGRPC.GracefulStop()
 }
 
 func heartbeatLoop(ctx context.Context, client pb.WorkerRegistryServiceClient, workerID string, maxTasks uint32, logger *slog.Logger) {

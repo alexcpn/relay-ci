@@ -4,6 +4,9 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -11,6 +14,7 @@ import (
 
 	pb "github.com/ci-system/ci/gen/ci/v1"
 	"github.com/ci-system/ci/pkg/dag"
+	"github.com/ci-system/ci/pkg/pipeline"
 	"github.com/ci-system/ci/pkg/scheduler"
 )
 
@@ -31,21 +35,28 @@ func (s *schedulerServer) SubmitBuild(ctx context.Context, req *pb.SubmitBuildRe
 
 	buildID := generateID()
 
-	// For now, create a simple graph from the request.
-	// In production, we'd clone the repo and parse pipeline definition.
-	g := dag.New()
-	g.AddTask(&dag.Task{
-		ID:             "clone",
-		Name:           "clone",
-		ContainerImage: "alpine/git:latest",
-		Commands:       []string{"git", "clone", req.Source.RepoUrl, "/workspace"},
-		CPUMillicores:  500,
-		MemoryMB:       256,
-		DiskMB:         1000,
-	})
+	// Clone the repo and parse the pipeline config.
+	g, err := fetchAndBuildGraph(ctx, req.Source)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "loading pipeline: %v", err)
+	}
 
-	if err := g.Validate(); err != nil {
-		return nil, status.Errorf(codes.Internal, "invalid pipeline graph: %v", err)
+	// Inject build-level env vars into every task so commands like
+	// "git clone $REPO_URL" and "git checkout $COMMIT_SHA" work.
+	buildEnv := map[string]string{
+		"REPO_URL":   req.Source.RepoUrl,
+		"BRANCH":     req.Source.Branch,
+		"COMMIT_SHA": req.Source.CommitSha,
+	}
+	for _, task := range g.Tasks() {
+		if task.Env == nil {
+			task.Env = make(map[string]string)
+		}
+		for k, v := range buildEnv {
+			if _, exists := task.Env[k]; !exists {
+				task.Env[k] = v
+			}
+		}
 	}
 
 	build := &scheduler.Build{
@@ -65,6 +76,55 @@ func (s *schedulerServer) SubmitBuild(ctx context.Context, req *pb.SubmitBuildRe
 	return &pb.SubmitBuildResponse{
 		BuildId: &pb.BuildID{Id: buildID},
 	}, nil
+}
+
+// fetchAndBuildGraph clones the repo at the given source, finds the pipeline
+// config file (pipeline.yml or pipeline.yaml), parses it, and builds the DAG.
+func fetchAndBuildGraph(ctx context.Context, src *pb.GitSource) (*dag.Graph, error) {
+	tmpDir, err := os.MkdirTemp("", "ci-pipeline-*")
+	if err != nil {
+		return nil, fmt.Errorf("creating temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Clone the repo (shallow, specific branch if provided).
+	args := []string{"clone", "--depth=1"}
+	if src.Branch != "" {
+		args = append(args, "--branch", src.Branch)
+	}
+	args = append(args, src.RepoUrl, tmpDir)
+
+	if out, err := exec.CommandContext(ctx, "git", args...).CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("cloning repo: %w\n%s", err, out)
+	}
+
+	// Check out a specific commit if requested.
+	if src.CommitSha != "" && src.CommitSha != "HEAD" {
+		cmd := exec.CommandContext(ctx, "git", "-C", tmpDir, "checkout", src.CommitSha)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return nil, fmt.Errorf("checking out commit %s: %w\n%s", src.CommitSha, err, out)
+		}
+	}
+
+	// Find pipeline config (pipeline.yml or pipeline.yaml).
+	var cfgPath string
+	for _, name := range []string{"pipeline.yml", "pipeline.yaml"} {
+		p := filepath.Join(tmpDir, name)
+		if _, err := os.Stat(p); err == nil {
+			cfgPath = p
+			break
+		}
+	}
+	if cfgPath == "" {
+		return nil, fmt.Errorf("no pipeline.yml or pipeline.yaml found in repo root")
+	}
+
+	cfg, err := pipeline.ParseFile(cfgPath)
+	if err != nil {
+		return nil, fmt.Errorf("parsing pipeline config: %w", err)
+	}
+
+	return pipeline.BuildGraph(cfg)
 }
 
 func (s *schedulerServer) CancelBuild(ctx context.Context, req *pb.CancelBuildRequest) (*pb.CancelBuildResponse, error) {

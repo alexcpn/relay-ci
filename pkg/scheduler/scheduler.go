@@ -259,6 +259,14 @@ func (s *Scheduler) GetBuild(id string) (*Build, bool) {
 	return b, ok
 }
 
+// FindBuildByTask returns the build ID that contains the given task.
+func (s *Scheduler) FindBuildByTask(taskID string) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	buildID, ok := s.taskBuild[taskID]
+	return buildID, ok
+}
+
 // ListBuilds returns all builds.
 func (s *Scheduler) ListBuilds() []*Build {
 	s.mu.Lock()

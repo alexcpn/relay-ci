@@ -106,21 +106,29 @@ func (s *workerRegistryServer) ReportTaskResult(ctx context.Context, req *pb.Rep
 		return nil, status.Error(codes.InvalidArgument, "result with task_id is required")
 	}
 
+	taskID := req.Result.TaskId.Id
 	taskState := protoToTaskState(req.Result.State)
 
+	// Look up which build this task belongs to.
+	buildID, ok := s.sched.FindBuildByTask(taskID)
+	if !ok {
+		return nil, status.Errorf(codes.NotFound, "no build found for task %q", taskID)
+	}
+
 	_, err := s.sched.HandleTaskResult(scheduler.TaskResultReport{
-		TaskID:   req.Result.TaskId.Id,
+		BuildID:  buildID,
+		TaskID:   taskID,
 		State:    taskState,
 		ExitCode: int(req.Result.ExitCode),
 		Error:    req.Result.ErrorMessage,
 	})
 	if err != nil {
-		// Try to find the build ID from the scheduler.
 		return nil, status.Errorf(codes.Internal, "handling task result: %v", err)
 	}
 
 	s.logger.Info("task result received",
-		"task_id", req.Result.TaskId.Id,
+		"task_id", taskID,
+		"build_id", buildID,
 		"state", taskState,
 		"exit_code", req.Result.ExitCode,
 		"worker_id", req.WorkerId.GetId(),

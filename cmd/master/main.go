@@ -34,15 +34,13 @@ func main() {
 	registry := worker.NewRegistry(30 * time.Second)
 	logs := logstore.New()
 
-	// Scheduler with assign callback (sends tasks to workers via gRPC).
-	// For now, just log assignments. Real implementation sends via WorkerService.
+	// Dispatcher sends tasks to workers via gRPC.
+	disp := newDispatcher(registry, logger)
+	defer disp.close()
+
+	// Scheduler calls dispatcher when assigning tasks.
 	sched := scheduler.New(registry, func(a scheduler.TaskAssignment) error {
-		logger.Info("task dispatched",
-			"task", a.Task.Name,
-			"worker", a.WorkerID,
-			"build", a.BuildID,
-		)
-		return nil
+		return disp.dispatch(a)
 	}, logger)
 
 	// SCM router for webhooks.
@@ -57,13 +55,16 @@ func main() {
 	pb.RegisterWorkerRegistryServiceServer(grpcServer, newWorkerRegistryServer(registry, sched, logger))
 	pb.RegisterLogServiceServer(grpcServer, newLogServer(logs))
 
-	// --- HTTP server (webhooks) ---
+	// --- HTTP server (webhooks + log viewer) ---
 
 	mux := http.NewServeMux()
 	mux.Handle("/webhooks", newWebhookHandler(router, sched, logger, webhookSecret))
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"status":"ok"}`))
+	})
+	mux.HandleFunc("/logs", func(w http.ResponseWriter, r *http.Request) {
+		handleLogsHTTP(w, r, logs)
 	})
 
 	httpServer := &http.Server{
