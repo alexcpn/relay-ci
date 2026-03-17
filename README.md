@@ -1,8 +1,14 @@
-# Relay CI - A CI for AI Workflows
+# **Relay CI** - A CI for AI, Built by AI
+
+<p align="center">
+  <img src="icon.png" alt="Relay CI" width="180"/>
+</p>
 
 ## A fast, parallel, AI-native CI system built specifically for Agentic Workflows.
 
-Relay CI is a distributed, DAG-based, containerised CI system built in Go. Pipelines execute in parallel across ephemeral containers, build status is reported back to GitHub/GitLab, and every part of the system is reachable by AI agents via a built-in MCP server — so agents can monitor builds, diagnose failures, suggest efixes, enforce code policies, and trigger retries without human intervention.
+Relay CI is a distributed, DAG-based, containerised CI system built in Go. Pipelines execute in parallel across ephemeral containers.
+
+Build status is reported back to GitHub/GitLab, and every part of the system is reachable by AI agents via a built-in MCP server — so agents can trigger and monitor builds, diagnose failures, suggest efixes, enforce code policies via AI Code and Design reviews, and trigger retries without human intervention.
 
 → **[Quick Start Guide](QuickStart.md)** — get master, worker, and MCP server running in 5 minutes.
 
@@ -19,6 +25,7 @@ Most CI systems were built for humans reading dashboards. Relay CI is built for 
 | Humans check code quality manually | Agents run `suggest_fix` and open PRs with corrections |
 | Build results live in a web UI | Build results are a first-class API callable by any MCP client |
 | CI config is opaque to LLMs | `pipeline.yml` is plain YAML, readable and writable by agents |
+| AI Code Review is not native to the CI | AI Code review is part of the CI pipeline and aligned to the way modern AI Agents work |
 
 ---
 
