@@ -195,7 +195,8 @@ func commandsForCodeReview(cfg *CodeReviewConfig) []string {
 	}
 
 	encoded := base64.StdEncoding.EncodeToString([]byte(codeReviewScript))
-	install := fmt.Sprintf("pip install -q %s 2>/dev/null || true", sdkPkg)
+	// python:3.12-slim ships without git; install it alongside the LLM SDK.
+	install := fmt.Sprintf("apt-get install -y -qq git 2>/dev/null || true && pip install -q %s 2>/dev/null || true", sdkPkg)
 	run := fmt.Sprintf(
 		"echo '%s' | base64 -d | "+
 			"REVIEW_PROVIDER='%s' REVIEW_BASE_BRANCH='%s' REVIEW_PROMPT_PATH='%s' "+
