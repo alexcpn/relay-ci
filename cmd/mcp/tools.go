@@ -34,7 +34,7 @@ func (s *mcpServer) toolListBuilds(ctx context.Context, args json.RawMessage) *m
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Found %d builds:\n\n", len(resp.Builds)))
+	fmt.Fprintf(&sb, "Found %d builds:\n\n", len(resp.Builds))
 	for _, b := range resp.Builds {
 		if params.State != "" && b.State.String() != params.State {
 			continue
@@ -45,12 +45,12 @@ func (s *mcpServer) toolListBuilds(ctx context.Context, args json.RawMessage) *m
 			repo = b.Source.RepoUrl
 			branch = b.Source.Branch
 		}
-		sb.WriteString(fmt.Sprintf("• **%s** — %s\n  Repo: %s | Branch: %s | Trigger: %s\n",
-			b.BuildId.Id, b.State, repo, branch, b.TriggeredBy))
+		fmt.Fprintf(&sb, "• **%s** — %s\n  Repo: %s | Branch: %s | Trigger: %s\n",
+			b.BuildId.Id, b.State, repo, branch, b.TriggeredBy)
 
 		if b.StartedAt != nil && b.FinishedAt != nil {
 			dur := b.FinishedAt.AsTime().Sub(b.StartedAt.AsTime())
-			sb.WriteString(fmt.Sprintf("  Duration: %s\n", dur.Round(time.Millisecond)))
+			fmt.Fprintf(&sb, "  Duration: %s\n", dur.Round(time.Millisecond))
 		}
 		sb.WriteString("\n")
 	}
@@ -283,7 +283,7 @@ func (s *mcpServer) toolDiagnoseBuild(ctx context.Context, args json.RawMessage)
 		sb.WriteString("\n")
 	}
 
-	sb.WriteString(fmt.Sprintf("### Summary\n"))
+	sb.WriteString("### Summary\n")
 	sb.WriteString(fmt.Sprintf("- ✅ Passed: %d\n", len(passedTasks)))
 	sb.WriteString(fmt.Sprintf("- ❌ Failed: %d\n", len(failedTasks)))
 	sb.WriteString(fmt.Sprintf("- ⏭️ Skipped: %d\n", len(skippedTasks)))

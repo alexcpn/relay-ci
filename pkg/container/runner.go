@@ -80,7 +80,7 @@ func (r *Runner) Run(ctx context.Context, config ContainerConfig) (*RunResult, e
 		if ctx.Err() != nil {
 			result.Error = "timeout exceeded"
 			result.ExitCode = -1
-			container.Stop(context.Background())
+			_ = container.Stop(context.Background())
 			return result, nil
 		}
 		return nil, fmt.Errorf("waiting for container: %w", err)

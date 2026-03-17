@@ -370,20 +370,4 @@ func errorResult(text string) *mcpToolResult {
 	}
 }
 
-func jsonResult(v interface{}) *mcpToolResult {
-	data, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
-		return errorResult("json marshal error: " + err.Error())
-	}
-	return textResult(string(data))
-}
-
-// formatDuration formats a protobuf timestamp duration for display.
-func formatDuration(startedAt, finishedAt interface{ AsTime() time.Time }) string {
-	if startedAt == nil || finishedAt == nil {
-		return ""
-	}
-	d := finishedAt.AsTime().Sub(startedAt.AsTime())
-	return d.Round(time.Millisecond).String()
-}
 

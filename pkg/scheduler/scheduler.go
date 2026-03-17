@@ -294,7 +294,7 @@ func (s *Scheduler) HandleDeadWorker(workerID string) {
 		if !ok {
 			continue
 		}
-		build.Graph.Complete(taskID, dag.TaskFailed, -1, "worker died: "+workerID)
+		_, _ = build.Graph.Complete(taskID, dag.TaskFailed, -1, "worker died: "+workerID)
 		delete(s.taskWorker, taskID)
 
 		s.logger.Warn("task failed due to dead worker",
@@ -318,7 +318,7 @@ func (s *Scheduler) pickWorker(task *dag.Task) (string, error) {
 	disk := task.DiskMB
 
 	var bestWorker *worker.Info
-	var bestScore uint64 = ^uint64(0) // max uint64
+	bestScore := ^uint64(0) // max uint64
 
 	for _, w := range active {
 		if !w.CanAcceptTask(cpu, mem, disk) {

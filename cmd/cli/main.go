@@ -217,7 +217,7 @@ func cmdWatch(ctx context.Context, conn *grpc.ClientConn) {
 
 	// Longer timeout for watching.
 	var cancel context.CancelFunc
-	ctx, cancel = context.WithTimeout(context.Background(), 30*time.Minute)
+	ctx, cancel = context.WithTimeout(ctx, 30*time.Minute)
 	defer cancel()
 
 	stream, err := client.WatchBuild(ctx, &pb.WatchBuildRequest{

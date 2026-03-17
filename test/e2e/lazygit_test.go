@@ -11,7 +11,6 @@ package e2e
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -183,20 +182,3 @@ func envOrDefault(key, def string) string {
 	return def
 }
 
-// failedTaskSummary returns a human-readable summary of failed tasks.
-func failedTaskSummary(tasks []*pb.Task) string {
-	var failed []string
-	for _, t := range tasks {
-		if t.State == pb.TaskState_TASK_STATE_FAILED {
-			exit := ""
-			if t.Result != nil {
-				exit = fmt.Sprintf(" (exit=%d)", t.Result.ExitCode)
-			}
-			failed = append(failed, t.Name+exit)
-		}
-	}
-	if len(failed) == 0 {
-		return "none"
-	}
-	return fmt.Sprintf("%v", failed)
-}
