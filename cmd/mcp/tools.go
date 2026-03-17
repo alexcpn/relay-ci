@@ -87,7 +87,7 @@ func (s *mcpServer) toolGetBuild(ctx context.Context, args json.RawMessage) *mcp
 
 	if b.StartedAt != nil && b.FinishedAt != nil {
 		dur := b.FinishedAt.AsTime().Sub(b.StartedAt.AsTime())
-		sb.WriteString(fmt.Sprintf("**Duration:** %s\n\n", dur.Round(time.Millisecond)))
+		fmt.Fprintf(&sb, "**Duration:** %s\n\n", dur.Round(time.Millisecond))
 	}
 
 	// Task table.
@@ -115,11 +115,11 @@ func (s *mcpServer) toolGetBuild(ctx context.Context, args json.RawMessage) *mcp
 			failed++
 		}
 
-		sb.WriteString(fmt.Sprintf("| %s | %s | %s | %s |\n",
-			task.Name, state, exit, dur))
+		fmt.Fprintf(&sb, "| %s | %s | %s | %s |\n",
+			task.Name, state, exit, dur)
 	}
 
-	sb.WriteString(fmt.Sprintf("\n**Summary:** %d/%d passed, %d failed\n", passed, total, failed))
+	fmt.Fprintf(&sb, "\n**Summary:** %d/%d passed, %d failed\n", passed, total, failed)
 
 	return textResult(sb.String())
 }
