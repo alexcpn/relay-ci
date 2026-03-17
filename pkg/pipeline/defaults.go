@@ -195,10 +195,15 @@ func commandsForCodeReview(cfg *CodeReviewConfig) []string {
 	}
 
 	encoded := base64.StdEncoding.EncodeToString([]byte(codeReviewScript))
-	// python:3.12-slim ships without git; install it alongside the LLM SDK.
-	// Try to install git (best-effort: non-Debian images may lack apt-get).
-	// pip install must succeed — without the SDK the script will crash immediately.
-	install := fmt.Sprintf("(apt-get update -qq && apt-get install -y -qq git) || true && pip install -q %s", sdkPkg)
+	// Install git if apt-get is available (Debian/Ubuntu images); skip silently otherwise.
+	// If apt-get exists but the install fails, the error surfaces naturally.
+	// pip install is always required — without the SDK the script fails immediately.
+	install := fmt.Sprintf(
+		"command -v apt-get >/dev/null 2>&1 && (apt-get update -qq && apt-get install -y -qq git);"+
+			" command -v git >/dev/null 2>&1 || echo 'WARNING: git not found, diff may fail';"+
+			" pip install -q %s",
+		sdkPkg,
+	)
 	run := fmt.Sprintf(
 		"echo '%s' | base64 -d | "+
 			"REVIEW_PROVIDER='%s' REVIEW_BASE_BRANCH='%s' REVIEW_PROMPT_PATH='%s' "+
