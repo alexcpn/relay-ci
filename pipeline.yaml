@@ -35,7 +35,7 @@ tasks:
       - make proto
     depends_on: [clone]
     cache:
-      - key: go-mod-{{ checksum "go.sum" }}
+      - key: gomod
         path: /go/pkg/mod
 
   - id: build
@@ -46,9 +46,8 @@ tasks:
       - go build -o bin/ci-mcp ./cmd/mcp
     depends_on: [proto]
     cache:
-      - key: go-mod-{{ checksum "go.sum" }}
+      - key: gomod
         path: /go/pkg/mod
-        readonly: true
 
   - id: test
     commands:
@@ -57,24 +56,27 @@ tasks:
     env:
       CGO_ENABLED: "1"
     cache:
-      - key: go-mod-{{ checksum "go.sum" }}
+      - key: gomod
         path: /go/pkg/mod
-        readonly: true
     cpu: 2000
     memory_mb: 1024
 
+  - id: lint
+    image: golangci/golangci-lint:latest
+    commands:
+      - golangci-lint run --timeout=5m
+    depends_on: [proto]
+    cache:
+      - key: gomod
+        path: /go/pkg/mod
+      - key: golangci-lint-cache
+        path: /root/.cache/golangci-lint
+    memory_mb: 2048
+
 integrations:
-
-  linters:
-    enabled: true
-    tools:
-      - name: golangci-lint
-        image: golangci/golangci-lint:latest
-
   security:
     enabled: true
     tools:
-      - name: gosec
       - name: trivy
         severity: HIGH,CRITICAL
         fail_on_findings: true
