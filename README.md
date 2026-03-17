@@ -1,6 +1,5 @@
 # Relay CI
-
-**Relay CI** — A fast, parallel, AI-native CI system designed from the ground up for Agentic Workflows.
+## A CI for AI  -A fast, parallel, AI-native CI system designed from the ground up for Agentic Workflows.
 
 Relay CI is a distributed, DAG-based, containerised CI system built in Go. Pipelines execute in parallel across ephemeral containers, build status is reported back to GitHub/GitLab, and every part of the system is reachable by AI agents via a built-in MCP server — so agents can monitor builds, diagnose failures, suggest fixes, enforce code policies, and trigger retries without human intervention.
 
@@ -223,6 +222,7 @@ CI_MASTER=localhost:9090 \
 ## Pipeline Configuration
 
 Drop a `pipeline.yml` in your repo root:
+See the sample [pipeline.yml](pipeline.yml) in the repo that can build this repo!
 
 ```yaml
 name: my-service
