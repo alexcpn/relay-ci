@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	pb "github.com/ci-system/ci/gen/ci/v1"
 	"github.com/ci-system/ci/pkg/dag"
+	"github.com/ci-system/ci/pkg/logstore"
 	"github.com/ci-system/ci/pkg/scheduler"
 	"github.com/ci-system/ci/pkg/scm"
 	"github.com/ci-system/ci/pkg/worker"
@@ -22,15 +24,17 @@ type workerRegistryServer struct {
 	registry  *worker.Registry
 	sched     *scheduler.Scheduler
 	scmRouter *scm.Router
+	logs      *logstore.Store
 	logger    *slog.Logger
 	publicURL string
 }
 
-func newWorkerRegistryServer(reg *worker.Registry, sched *scheduler.Scheduler, scmRouter *scm.Router, logger *slog.Logger, publicURL string) *workerRegistryServer {
+func newWorkerRegistryServer(reg *worker.Registry, sched *scheduler.Scheduler, scmRouter *scm.Router, logs *logstore.Store, logger *slog.Logger, publicURL string) *workerRegistryServer {
 	return &workerRegistryServer{
 		registry:  reg,
 		sched:     sched,
 		scmRouter: scmRouter,
+		logs:      logs,
 		logger:    logger,
 		publicURL: publicURL,
 	}
@@ -157,16 +161,19 @@ func (s *workerRegistryServer) reportBuildCompletion(ctx context.Context, c sche
 	if !ok {
 		return
 	}
+
 	state := scm.StatusSuccess
 	description := "Build passed"
 	if !c.Passed {
 		state = scm.StatusFailure
 		description = "Build failed"
 	}
+
 	var targetURL string
 	if s.publicURL != "" {
 		targetURL = fmt.Sprintf("%s/logs?build_id=%s", s.publicURL, b.ID)
 	}
+
 	if err := client.ReportStatus(ctx, b.SCMToken, scm.StatusReport{
 		Provider:     b.SCMProvider,
 		RepoFullName: b.RepoFullName,
@@ -179,6 +186,121 @@ func (s *workerRegistryServer) reportBuildCompletion(ctx context.Context, c sche
 		s.logger.Warn("failed to report build completion to SCM",
 			"build_id", b.ID, "err", err)
 	}
+
+	// Post a summary comment on the PR if this was a PR build.
+	if b.PRNumber != "" {
+		body := s.buildPRComment(c, targetURL)
+		if err := client.PostPRComment(ctx, b.SCMToken, scm.PRComment{
+			RepoFullName: b.RepoFullName,
+			PRNumber:     b.PRNumber,
+			Body:         body,
+		}); err != nil {
+			s.logger.Warn("failed to post PR comment",
+				"build_id", b.ID, "pr", b.PRNumber, "err", err)
+		}
+	}
+}
+
+// buildPRComment formats a Markdown PR comment summarising the build result.
+func (s *workerRegistryServer) buildPRComment(c scheduler.BuildCompletion, logsURL string) string {
+	b := c.Build
+	var sb strings.Builder
+
+	if c.Passed {
+		sb.WriteString("## ✅ Relay CI — Build Passed\n\n")
+	} else {
+		sb.WriteString("## ❌ Relay CI — Build Failed\n\n")
+	}
+
+	sb.WriteString(fmt.Sprintf("**Build:** `%s`", b.ID))
+	if b.Branch != "" {
+		sb.WriteString(fmt.Sprintf(" · **Branch:** `%s`", b.Branch))
+	}
+	if logsURL != "" {
+		sb.WriteString(fmt.Sprintf(" · [View Logs](%s)", logsURL))
+	}
+	sb.WriteString("\n\n")
+
+	// Task summary table.
+	sb.WriteString("| Task | Result | Details |\n")
+	sb.WriteString("|---|---|---|\n")
+	for _, task := range b.Graph.Tasks() {
+		icon := taskStateIcon(task.State)
+		details := ""
+		// For failed tasks include a snippet from the logs.
+		if task.State == dag.TaskFailed {
+			details = s.taskLogSnippet(task.ID, 5)
+		}
+		// For code review task include the verdict line.
+		if task.ID == "review-pr" && task.State != dag.TaskSkipped {
+			details = s.codeReviewVerdict(task.ID)
+		}
+		sb.WriteString(fmt.Sprintf("| %s | %s %s | %s |\n",
+			task.Name, icon, task.State, details))
+	}
+
+	sb.WriteString("\n---\n")
+	sb.WriteString("*Posted by [Relay CI](https://github.com/ci-system/ci)*")
+	return sb.String()
+}
+
+// taskStateIcon returns an emoji for a task state.
+func taskStateIcon(s dag.TaskState) string {
+	switch s {
+	case dag.TaskPassed:
+		return "✅"
+	case dag.TaskFailed:
+		return "❌"
+	case dag.TaskSkipped:
+		return "⏭️"
+	case dag.TaskCancelled:
+		return "🚫"
+	case dag.TaskTimedOut:
+		return "⏱️"
+	default:
+		return "⏳"
+	}
+}
+
+// taskLogSnippet fetches the last n lines of a task's logs and formats them
+// as a fenced code block for embedding in a PR comment.
+func (s *workerRegistryServer) taskLogSnippet(taskID string, n int) string {
+	if s.logs == nil {
+		return ""
+	}
+	total := s.logs.LineCount(taskID)
+	offset := total - int64(n)
+	if offset < 0 {
+		offset = 0
+	}
+	lines, _ := s.logs.Get(taskID, offset, int64(n))
+	if len(lines) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("<details><summary>last log lines</summary>\n\n```\n")
+	for _, l := range lines {
+		sb.WriteString(l.Content)
+		sb.WriteString("\n")
+	}
+	sb.WriteString("```\n</details>")
+	return sb.String()
+}
+
+// codeReviewVerdict scans the code review task logs for the verdict line
+// and returns it for display in the PR comment.
+func (s *workerRegistryServer) codeReviewVerdict(taskID string) string {
+	if s.logs == nil {
+		return ""
+	}
+	total := s.logs.LineCount(taskID)
+	lines, _ := s.logs.Get(taskID, 0, total)
+	for i := len(lines) - 1; i >= 0; i-- {
+		if strings.Contains(lines[i].Content, "Ready to merge?") {
+			return "`" + strings.TrimSpace(lines[i].Content) + "`"
+		}
+	}
+	return ""
 }
 
 func protoToTaskState(s pb.TaskState) dag.TaskState {

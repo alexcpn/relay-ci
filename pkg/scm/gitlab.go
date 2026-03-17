@@ -112,6 +112,38 @@ func (g *GitLab) ReportStatus(ctx context.Context, token string, report StatusRe
 	return nil
 }
 
+// PostPRComment posts a markdown comment on a GitLab merge request.
+func (g *GitLab) PostPRComment(ctx context.Context, token string, comment PRComment) error {
+	body, err := json.Marshal(map[string]string{"body": comment.Body})
+	if err != nil {
+		return err
+	}
+
+	url := fmt.Sprintf("%s/projects/%s/merge_requests/%s/notes",
+		g.apiBase,
+		gitlabProjectPath(comment.RepoFullName),
+		comment.PRNumber,
+	)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("PRIVATE-TOKEN", token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := g.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("posting MR comment: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("gitlab MR comment API returned %d: %s", resp.StatusCode, string(respBody))
+	}
+	return nil
+}
+
 // --- GitLab payload parsing ---
 
 type glPushPayload struct {

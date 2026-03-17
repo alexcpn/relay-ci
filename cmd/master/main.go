@@ -59,7 +59,7 @@ func main() {
 
 	grpcServer := grpc.NewServer()
 	pb.RegisterSchedulerServiceServer(grpcServer, newSchedulerServer(sched, router))
-	pb.RegisterWorkerRegistryServiceServer(grpcServer, newWorkerRegistryServer(registry, sched, router, logger, publicURL))
+	pb.RegisterWorkerRegistryServiceServer(grpcServer, newWorkerRegistryServer(registry, sched, router, logs, logger, publicURL))
 	pb.RegisterLogServiceServer(grpcServer, newLogServer(logs))
 	pb.RegisterSecretsServiceServer(grpcServer, newSecretsServer(secretStore))
 

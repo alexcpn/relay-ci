@@ -126,6 +126,13 @@ type StatusReport struct {
 	TargetURL    string // link to build details
 }
 
+// PRComment is posted to a pull request as a bot comment.
+type PRComment struct {
+	RepoFullName string
+	PRNumber     string
+	Body         string // Markdown body
+}
+
 // WebhookConfig defines how a repository is connected to our CI.
 type WebhookConfig struct {
 	ID               string

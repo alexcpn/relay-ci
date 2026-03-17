@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -101,11 +102,17 @@ func fetchAndBuildGraph(ctx context.Context, src *pb.GitSource) (*dag.Graph, err
 		return nil, fmt.Errorf("cloning repo: %w\n%s", err, out)
 	}
 
-	// Check out a specific commit if requested.
+	// Check out a specific commit if requested and it differs from HEAD.
+	// With --depth=1 the clone is already at the branch tip; skip the checkout
+	// if the SHA matches to avoid "reference is not a tree" on shallow clones.
 	if src.CommitSha != "" && src.CommitSha != "HEAD" {
-		cmd := exec.CommandContext(ctx, "git", "-C", tmpDir, "checkout", src.CommitSha)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return nil, fmt.Errorf("checking out commit %s: %w\n%s", src.CommitSha, err, out)
+		headOut, _ := exec.CommandContext(ctx, "git", "-C", tmpDir, "rev-parse", "HEAD").Output()
+		head := strings.TrimSpace(string(headOut))
+		if head != src.CommitSha && !strings.HasPrefix(head, src.CommitSha) {
+			cmd := exec.CommandContext(ctx, "git", "-C", tmpDir, "checkout", src.CommitSha)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				return nil, fmt.Errorf("checking out commit %s: %w\n%s", src.CommitSha, err, out)
+			}
 		}
 	}
 

@@ -18,9 +18,16 @@ type StatusReporter interface {
 	ReportStatus(ctx context.Context, token string, report StatusReport) error
 }
 
-// Client combines webhook parsing and status reporting for a provider.
+// PRCommenter posts comments on pull requests.
+type PRCommenter interface {
+	// PostPRComment posts a markdown comment on the given PR.
+	PostPRComment(ctx context.Context, token string, comment PRComment) error
+}
+
+// Client combines webhook parsing, status reporting, and PR commenting for a provider.
 type Client interface {
 	WebhookParser
 	StatusReporter
+	PRCommenter
 	Provider() Provider
 }
