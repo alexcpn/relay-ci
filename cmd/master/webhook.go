@@ -6,8 +6,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 
-	"github.com/ci-system/ci/pkg/dag"
+	pb "github.com/ci-system/ci/gen/ci/v1"
 	"github.com/ci-system/ci/pkg/scheduler"
 	"github.com/ci-system/ci/pkg/scm"
 	"github.com/ci-system/ci/pkg/secrets"
@@ -20,16 +21,24 @@ type webhookHandler struct {
 	logger        *slog.Logger
 	defaultSecret string
 	secretStore   *secrets.Store
+	publicURL     string // base URL of this master, e.g. "http://ci.example.com:8080" (optional)
 }
 
-func newWebhookHandler(router *scm.Router, sched *scheduler.Scheduler, logger *slog.Logger, secret string, secretStore *secrets.Store) *webhookHandler {
+func newWebhookHandler(router *scm.Router, sched *scheduler.Scheduler, logger *slog.Logger, secret string, secretStore *secrets.Store, publicURL string) *webhookHandler {
 	return &webhookHandler{
 		router:        router,
 		sched:         sched,
 		logger:        logger,
 		defaultSecret: secret,
 		secretStore:   secretStore,
+		publicURL:     publicURL,
 	}
+}
+
+// branchName strips the refs/heads/ prefix from a git ref, returning
+// just the branch name suitable for git clone --branch.
+func branchName(ref string) string {
+	return strings.TrimPrefix(ref, "refs/heads/")
 }
 
 // lookupToken finds the SCM access token for the given provider.
@@ -63,6 +72,10 @@ func (h *webhookHandler) reportStatus(ctx context.Context, build *scheduler.Buil
 	if !ok {
 		return
 	}
+	var targetURL string
+	if h.publicURL != "" {
+		targetURL = fmt.Sprintf("%s/logs?build_id=%s", h.publicURL, build.ID)
+	}
 	if err := client.ReportStatus(ctx, build.SCMToken, scm.StatusReport{
 		Provider:     build.SCMProvider,
 		RepoFullName: build.RepoFullName,
@@ -70,6 +83,7 @@ func (h *webhookHandler) reportStatus(ctx context.Context, build *scheduler.Buil
 		State:        state,
 		Context:      "ci/build",
 		Description:  description,
+		TargetURL:    targetURL,
 	}); err != nil {
 		h.logger.Warn("failed to report SCM status", "build_id", build.ID, "err", err)
 	}
@@ -109,18 +123,35 @@ func (h *webhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (h *webhookHandler) handlePush(w http.ResponseWriter, r *http.Request, event *scm.Event) {
 	push := event.Push
 	buildID := generateID()
+	branch := branchName(push.Ref)
 
-	g := dag.New()
-	g.AddTask(&dag.Task{
-		ID:             "build",
-		Name:           "build",
-		ContainerImage: "alpine:latest",
-		Commands:       []string{"echo", "building " + push.AfterSHA},
-		CPUMillicores:  1000,
-		MemoryMB:       512,
-		DiskMB:         2000,
-	})
-	g.Validate()
+	src := &pb.GitSource{
+		RepoUrl:   push.RepoURL,
+		Branch:    branch,
+		CommitSha: push.AfterSHA,
+	}
+	g, err := fetchAndBuildGraph(r.Context(), src)
+	if err != nil {
+		h.logger.Error("failed to load pipeline for push", "repo", push.RepoFullName, "err", err)
+		http.Error(w, "failed to load pipeline: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	buildEnv := map[string]string{
+		"REPO_URL":   push.RepoURL,
+		"BRANCH":     branch,
+		"COMMIT_SHA": push.AfterSHA,
+	}
+	for _, task := range g.Tasks() {
+		if task.Env == nil {
+			task.Env = make(map[string]string)
+		}
+		for k, v := range buildEnv {
+			if _, exists := task.Env[k]; !exists {
+				task.Env[k] = v
+			}
+		}
+	}
 
 	build := &scheduler.Build{
 		ID:           buildID,
@@ -130,7 +161,7 @@ func (h *webhookHandler) handlePush(w http.ResponseWriter, r *http.Request, even
 		SCMProvider:  event.Provider,
 		SCMToken:     h.lookupToken(event.Provider, push.RepoFullName),
 		CommitSHA:    push.AfterSHA,
-		Branch:       push.Ref,
+		Branch:       branch,
 		TriggeredBy:  "webhook:" + push.Pusher,
 	}
 
@@ -164,17 +195,34 @@ func (h *webhookHandler) handlePR(w http.ResponseWriter, r *http.Request, event 
 
 	buildID := generateID()
 
-	g := dag.New()
-	g.AddTask(&dag.Task{
-		ID:             "build",
-		Name:           "build",
-		ContainerImage: "alpine:latest",
-		Commands:       []string{"echo", "building PR " + pr.HeadSHA},
-		CPUMillicores:  1000,
-		MemoryMB:       512,
-		DiskMB:         2000,
-	})
-	g.Validate()
+	src := &pb.GitSource{
+		RepoUrl:   pr.RepoURL,
+		Branch:    pr.HeadBranch,
+		CommitSha: pr.HeadSHA,
+	}
+	g, err := fetchAndBuildGraph(r.Context(), src)
+	if err != nil {
+		h.logger.Error("failed to load pipeline for PR", "repo", pr.RepoFullName, "err", err)
+		http.Error(w, "failed to load pipeline: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	buildEnv := map[string]string{
+		"REPO_URL":   pr.RepoURL,
+		"BRANCH":     pr.HeadBranch,
+		"COMMIT_SHA": pr.HeadSHA,
+		"PR_NUMBER":  fmt.Sprintf("%d", pr.Number),
+	}
+	for _, task := range g.Tasks() {
+		if task.Env == nil {
+			task.Env = make(map[string]string)
+		}
+		for k, v := range buildEnv {
+			if _, exists := task.Env[k]; !exists {
+				task.Env[k] = v
+			}
+		}
+	}
 
 	build := &scheduler.Build{
 		ID:           buildID,

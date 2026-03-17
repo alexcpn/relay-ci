@@ -344,6 +344,27 @@ Add a webhook to your repository:
 - **Events:** `push`, `pull_request` (GitHub) or `Push Hook`, `Merge Request Hook` (GitLab)
 - **Secret:** set `WEBHOOK_SECRET` env var on the master
 
+### Commit Status Reporting
+
+For webhook-triggered builds, Relay CI posts a commit status to GitHub/GitLab at two points:
+
+| Event | State | Message |
+|---|---|---|
+| Build queued | `pending` 🟡 | "Build queued" |
+| Build passed | `success` ✅ | "Build passed" |
+| Build failed | `failure` ❌ | "Build failed" |
+| Build cancelled | `error` | "Build cancelled" |
+
+**Setup:**
+1. Add `GITHUB_TOKEN=<token>` to `.secrets.env` (token needs `repo:status` scope)
+2. The master auto-loads `.secrets.env` on startup, or use `ci-cli secret set GITHUB_TOKEN`
+
+**"Details" link:** Set `PUBLIC_URL` so the status check links to your build logs:
+```bash
+PUBLIC_URL="https://your-server:8080" ./run.sh start
+```
+Without `PUBLIC_URL` the status check appears on GitHub but clicking "Details" goes nowhere.
+
 ---
 
 ## End-to-End Tests

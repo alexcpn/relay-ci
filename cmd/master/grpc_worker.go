@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 
@@ -22,14 +23,16 @@ type workerRegistryServer struct {
 	sched     *scheduler.Scheduler
 	scmRouter *scm.Router
 	logger    *slog.Logger
+	publicURL string
 }
 
-func newWorkerRegistryServer(reg *worker.Registry, sched *scheduler.Scheduler, scmRouter *scm.Router, logger *slog.Logger) *workerRegistryServer {
+func newWorkerRegistryServer(reg *worker.Registry, sched *scheduler.Scheduler, scmRouter *scm.Router, logger *slog.Logger, publicURL string) *workerRegistryServer {
 	return &workerRegistryServer{
 		registry:  reg,
 		sched:     sched,
 		scmRouter: scmRouter,
 		logger:    logger,
+		publicURL: publicURL,
 	}
 }
 
@@ -160,6 +163,10 @@ func (s *workerRegistryServer) reportBuildCompletion(ctx context.Context, c sche
 		state = scm.StatusFailure
 		description = "Build failed"
 	}
+	var targetURL string
+	if s.publicURL != "" {
+		targetURL = fmt.Sprintf("%s/logs?build_id=%s", s.publicURL, b.ID)
+	}
 	if err := client.ReportStatus(ctx, b.SCMToken, scm.StatusReport{
 		Provider:     b.SCMProvider,
 		RepoFullName: b.RepoFullName,
@@ -167,6 +174,7 @@ func (s *workerRegistryServer) reportBuildCompletion(ctx context.Context, c sche
 		State:        state,
 		Context:      "ci/build",
 		Description:  description,
+		TargetURL:    targetURL,
 	}); err != nil {
 		s.logger.Warn("failed to report build completion to SCM",
 			"build_id", b.ID, "err", err)

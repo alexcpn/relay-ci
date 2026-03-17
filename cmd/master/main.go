@@ -30,6 +30,7 @@ func main() {
 	grpcAddr := envOrDefault("GRPC_ADDR", ":9090")
 	httpAddr := envOrDefault("HTTP_ADDR", ":8080")
 	webhookSecret := os.Getenv("WEBHOOK_SECRET")
+	publicURL := os.Getenv("PUBLIC_URL") // e.g. "http://ci.example.com:8080" for Details links
 
 	// --- Initialize components ---
 
@@ -58,14 +59,14 @@ func main() {
 
 	grpcServer := grpc.NewServer()
 	pb.RegisterSchedulerServiceServer(grpcServer, newSchedulerServer(sched, router))
-	pb.RegisterWorkerRegistryServiceServer(grpcServer, newWorkerRegistryServer(registry, sched, router, logger))
+	pb.RegisterWorkerRegistryServiceServer(grpcServer, newWorkerRegistryServer(registry, sched, router, logger, publicURL))
 	pb.RegisterLogServiceServer(grpcServer, newLogServer(logs))
 	pb.RegisterSecretsServiceServer(grpcServer, newSecretsServer(secretStore))
 
 	// --- HTTP server (webhooks + log viewer) ---
 
 	mux := http.NewServeMux()
-	mux.Handle("/webhooks", newWebhookHandler(router, sched, logger, webhookSecret, secretStore))
+	mux.Handle("/webhooks", newWebhookHandler(router, sched, logger, webhookSecret, secretStore, publicURL))
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"status":"ok"}`))

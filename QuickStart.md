@@ -83,8 +83,19 @@ export WEBHOOK_SECRET="your-webhook-secret"    # same secret you set in GitHub
 # Optional
 export GRPC_ADDR=":9090"                       # gRPC API (default :9090)
 export HTTP_ADDR=":8080"                       # webhooks + health (default :8080)
+export PUBLIC_URL="http://ci.example.com:8080" # public base URL — enables "Details" links on GitHub commit statuses
+export SECRETS_FILE=".secrets.env"             # path to secrets file (default: .secrets.env in working dir)
 
 ./bin/ci-master
+```
+
+Or use the helper script:
+```bash
+./run.sh start      # build + start master, worker, and MCP server
+./run.sh restart    # rebuild and restart all
+./run.sh stop       # stop all
+./run.sh status     # show running processes
+./run.sh logs       # tail all logs
 ```
 
 You should see:
@@ -137,6 +148,37 @@ ngrok http 8080
 cloudflared tunnel --url http://localhost:8080
 ```
 
+### GitHub Commit Status Reporting
+
+When a build is triggered by a webhook, Relay CI automatically posts commit statuses back to GitHub:
+
+- **Pending** — posted immediately when the build is queued
+- **Success / Failure** — posted when the build completes
+
+You will see a status check on every commit and PR:
+
+```
+ci/build — Build passed   ✅
+ci/build — Build failed   ❌
+ci/build — Build queued   🟡
+```
+
+**Requirements:**
+- `GITHUB_TOKEN` must be set in `.secrets.env` (or via `ci-cli secret set GITHUB_TOKEN`) with `repo:status` scope
+- The token is looked up automatically per repo (scope = `org/repo`) falling back to `global`
+
+**Enabling the "Details" link:**
+
+By default the status check has no "Details" link. To make it point to your build logs, set `PUBLIC_URL` when starting the master:
+
+```bash
+PUBLIC_URL="http://ci.example.com:8080" ./run.sh start
+# or with ngrok:
+PUBLIC_URL="https://abc123.ngrok.io" ./run.sh start
+```
+
+The Details link will open `$PUBLIC_URL/logs?build_id=<id>` showing the full task log output.
+
 ## 5. Add a Pipeline to Your Repo
 
 Create `pipeline.yaml` in your repo root:
@@ -151,7 +193,7 @@ tasks:
   - id: clone
     image: alpine/git:latest
     commands:
-      - git clone --depth=1 $REPO_URL /workspace
+      - git clone --depth=1 --branch $BRANCH $REPO_URL /workspace
       - cd /workspace && git checkout $COMMIT_SHA
 
   - id: build
