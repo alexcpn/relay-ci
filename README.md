@@ -1,7 +1,8 @@
-# Relay CI
-## A CI for AI  -A fast, parallel, AI-native CI system designed from the ground up for Agentic Workflows.
+# Relay CI - A CI for AI
 
-Relay CI is a distributed, DAG-based, containerised CI system built in Go. Pipelines execute in parallel across ephemeral containers, build status is reported back to GitHub/GitLab, and every part of the system is reachable by AI agents via a built-in MCP server — so agents can monitor builds, diagnose failures, suggest fixes, enforce code policies, and trigger retries without human intervention.
+## A fast, parallel, AI-native CI system built specifically for Agentic Workflows.
+
+Relay CI is a distributed, DAG-based, containerised CI system built in Go. Pipelines execute in parallel across ephemeral containers, build status is reported back to GitHub/GitLab, and every part of the system is reachable by AI agents via a built-in MCP server — so agents can monitor builds, diagnose failures, suggest efixes, enforce code policies, and trigger retries without human intervention.
 
 → **[Quick Start Guide](QuickStart.md)** — get master, worker, and MCP server running in 5 minutes.
 
