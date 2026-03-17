@@ -265,8 +265,8 @@ def check_verdict(review_text, fail_on_critical):
     m = re.search(r'####\s*Critical[^\n]*\n(.*?)(?=####|\Z)', review_text, re.DOTALL | re.IGNORECASE)
     if m:
         body = m.group(1).strip()
-        # Ignore empty or template placeholder lines like "[Bugs, security issues...]"
-        if body and not re.match(r'^\[.*\]$', body):
+        # Ignore empty, placeholder lines like "[Bugs, security issues...]", or explicit "None"/"None."
+        if body and not re.match(r'^(\[.*\]|[Nn]one\.?)$', body):
             return True, "Critical issues found — see review above"
 
     return False, ""
