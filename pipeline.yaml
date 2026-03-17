@@ -1,0 +1,74 @@
+name: new-ci-system
+
+defaults:
+  image: golang:1.24
+  env:
+    CI: "true"
+    CGO_ENABLED: "0"
+    GOPATH: /go
+  cpu: 1000
+  memory_mb: 512
+  timeout: 300
+
+triggers:
+  branches: [main]
+  pull_requests: true
+  paths:
+    - "**/*.go"
+    - "**/*.proto"
+    - "go.mod"
+    - "go.sum"
+    - "Makefile"
+
+tasks:
+  - id: clone
+    image: alpine/git:latest
+    commands:
+      - git clone --depth=1 $REPO_URL /workspace
+      - cd /workspace && git checkout $COMMIT_SHA
+
+  - id: proto
+    commands:
+      - apt-get update -qq && apt-get install -y -qq protobuf-compiler
+      - go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+      - go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+      - make proto
+    depends_on: [clone]
+    cache:
+      - key: go-mod-{{ checksum "go.sum" }}
+        path: /go/pkg/mod
+
+  - id: build
+    commands:
+      - make build
+    depends_on: [proto]
+    cache:
+      - key: go-mod-{{ checksum "go.sum" }}
+        path: /go/pkg/mod
+        readonly: true
+
+  - id: test
+    commands:
+      - go test -race -count=1 ./...
+    depends_on: [proto]
+    cache:
+      - key: go-mod-{{ checksum "go.sum" }}
+        path: /go/pkg/mod
+        readonly: true
+    cpu: 2000
+    memory_mb: 1024
+
+integrations:
+
+  linters:
+    enabled: true
+    tools:
+      - name: golangci-lint
+
+  security:
+    enabled: true
+    tools:
+      - name: gosec
+      - name: trivy
+        severity: HIGH,CRITICAL
+        fail_on_findings: true
