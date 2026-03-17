@@ -196,12 +196,15 @@ func commandsForCodeReview(cfg *CodeReviewConfig) []string {
 
 	encoded := base64.StdEncoding.EncodeToString([]byte(codeReviewScript))
 	// Install git if apt-get is available (Debian/Ubuntu images); skip silently otherwise.
-	// If apt-get exists but the install fails, the error surfaces naturally.
-	// pip install is always required — without the SDK the script fails immediately.
+	// If apt-get is present but fails (e.g. network issue), emit a warning so the cause is visible.
+	// pip install is always required — failure exits immediately.
+	// Warnings go to stderr so they don't pollute captured stdout output.
 	install := fmt.Sprintf(
-		"command -v apt-get >/dev/null 2>&1 && (apt-get update -qq && apt-get install -y -qq git);"+
-			" command -v git >/dev/null 2>&1 || echo 'WARNING: git not found, diff may fail';"+
-			" pip install -q %s",
+		"command -v apt-get >/dev/null 2>&1 &&"+
+			" (apt-get update -qq && apt-get install -y -qq git ||"+
+			" echo 'WARNING: apt install of git failed' >&2);"+
+			" command -v git >/dev/null 2>&1 || echo 'WARNING: git not found, diff may fail' >&2;"+
+			" pip install -q %s || exit 1",
 		sdkPkg,
 	)
 	run := fmt.Sprintf(
