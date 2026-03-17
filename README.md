@@ -71,10 +71,11 @@ Agent workflow:
 
 **Code review assistance**
 ```
-Agent: "Review the diff in this PR for security issues"
-→ submit_build() → triggers security scanner (trivy, gosec, semgrep)
-→ get_task_logs() → returns structured scanner findings
-→ Agent posts inline PR comments with severity and remediation advice
+Agent: "Review the diff in this PR"
+→ submit_build() → triggers review-pr (LLM) + security scanners in parallel
+→ get_task_logs(task_id="review-pr") → full LLM review with verdict
+→ get_task_logs(task_id="security: trivy") → vulnerability findings
+→ Agent posts inline PR comments; build fails if verdict is No/With-fixes
 ```
 
 ### MCP Tools
@@ -266,6 +267,15 @@ integrations:
         severity: HIGH,CRITICAL
         fail_on_findings: true
 
+  code_review:
+    enabled: true
+    provider: anthropic       # or "openai" / "ollama"
+    api_key_secret: ANTHROPIC_API_KEY
+    model: claude-sonnet-4-6
+    base_branch: main
+    reviewer_prompt: code-reviewer.md
+    fail_on_critical: true    # block merge on No/With-fixes verdict
+
 triggers:
   branches: [main, master]
   pull_requests: true
@@ -278,6 +288,39 @@ triggers:
 | Linters | `golangci-lint`, `eslint`, `ruff`, `pylint`, `rubocop`, `shellcheck`, `hadolint` | Go modules, npm, pip |
 | Security | `trivy`, `grype`, `semgrep`, `gosec` | Vuln DBs |
 | Quality | `sonarqube` | — |
+| AI Code Review | Anthropic Claude, OpenAI, Ollama, agentic service | — |
+
+---
+
+## AI Code Review
+
+Relay CI has a built-in `review-pr` task that sends the full PR diff to an LLM and can block merges based on the verdict.
+
+```
+PR opened → clone → git diff origin/main...HEAD → LLM review → pass/fail
+```
+
+**Providers:** Anthropic Claude (default), OpenAI, Ollama, or an external agentic review service.
+
+**Pass/fail logic:**
+- `**Ready to merge?** Yes` → passes
+- `**Ready to merge?** No` or `With fixes` → fails the build
+- Non-empty `#### Critical` section → fails the build
+- Set `fail_on_critical: false` for advisory-only reviews
+
+**Setup:**
+```bash
+# Store API key (persists across restarts via .secrets.env)
+echo "ANTHROPIC_API_KEY=sk-ant-..." >> .secrets.env
+echo ".secrets.env" >> .gitignore
+```
+
+Add `code-reviewer.md` to your repo root as the reviewer prompt. Must end with:
+```
+**Ready to merge?** Yes / No / With fixes
+```
+
+See [QuickStart.md §8](QuickStart.md#8-ai-code-review) for full configuration options.
 
 ---
 
