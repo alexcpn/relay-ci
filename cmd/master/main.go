@@ -57,15 +57,15 @@ func main() {
 	// --- gRPC server ---
 
 	grpcServer := grpc.NewServer()
-	pb.RegisterSchedulerServiceServer(grpcServer, newSchedulerServer(sched))
-	pb.RegisterWorkerRegistryServiceServer(grpcServer, newWorkerRegistryServer(registry, sched, logger))
+	pb.RegisterSchedulerServiceServer(grpcServer, newSchedulerServer(sched, router))
+	pb.RegisterWorkerRegistryServiceServer(grpcServer, newWorkerRegistryServer(registry, sched, router, logger))
 	pb.RegisterLogServiceServer(grpcServer, newLogServer(logs))
 	pb.RegisterSecretsServiceServer(grpcServer, newSecretsServer(secretStore))
 
 	// --- HTTP server (webhooks + log viewer) ---
 
 	mux := http.NewServeMux()
-	mux.Handle("/webhooks", newWebhookHandler(router, sched, logger, webhookSecret))
+	mux.Handle("/webhooks", newWebhookHandler(router, sched, logger, webhookSecret, secretStore))
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"status":"ok"}`))

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ci-system/ci/pkg/dag"
+	"github.com/ci-system/ci/pkg/scm"
 	"github.com/ci-system/ci/pkg/worker"
 )
 
@@ -29,16 +30,27 @@ type TaskResultReport struct {
 
 // Build represents a running pipeline build.
 type Build struct {
-	ID          string
-	Graph       *dag.Graph
-	RepoURL     string
-	CommitSHA   string
-	Branch      string
-	PRNumber    string
-	TriggeredBy string
-	CreatedAt   time.Time
-	StartedAt   time.Time
-	FinishedAt  time.Time
+	ID           string
+	Graph        *dag.Graph
+	RepoURL      string
+	RepoFullName string      // e.g. "org/repo" — needed for SCM status reporting
+	SCMProvider  scm.Provider // provider to report status back to
+	SCMToken     string      // bearer token for the SCM status API
+	CommitSHA    string
+	Branch       string
+	PRNumber     string
+	TriggeredBy  string
+	CreatedAt    time.Time
+	StartedAt    time.Time
+	FinishedAt   time.Time
+}
+
+// BuildCompletion is returned by HandleTaskResult when a build transitions
+// to a terminal state. BuildID is empty if the build has not yet finished.
+type BuildCompletion struct {
+	BuildID string
+	Passed  bool
+	Build   *Build
 }
 
 // Scheduler manages builds and assigns tasks to workers.
@@ -175,20 +187,20 @@ func (s *Scheduler) Schedule(ctx context.Context) (int, error) {
 }
 
 // HandleTaskResult processes a completed task result from a worker.
-// It updates the DAG, releases worker capacity, and returns any newly
-// ready tasks that were scheduled as a result.
-func (s *Scheduler) HandleTaskResult(result TaskResultReport) (int, error) {
+// It updates the DAG, releases worker capacity, and returns a BuildCompletion
+// (non-empty BuildID) when the build reaches a terminal state.
+func (s *Scheduler) HandleTaskResult(result TaskResultReport) (BuildCompletion, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	build, ok := s.builds[result.BuildID]
 	if !ok {
-		return 0, fmt.Errorf("build not found: %q", result.BuildID)
+		return BuildCompletion{}, fmt.Errorf("build not found: %q", result.BuildID)
 	}
 
 	task, ok := build.Graph.GetTask(result.TaskID)
 	if !ok {
-		return 0, fmt.Errorf("task not found: %q in build %q", result.TaskID, result.BuildID)
+		return BuildCompletion{}, fmt.Errorf("task not found: %q in build %q", result.TaskID, result.BuildID)
 	}
 
 	// Release worker capacity.
@@ -200,7 +212,7 @@ func (s *Scheduler) HandleTaskResult(result TaskResultReport) (int, error) {
 	// Update the DAG.
 	newlyReady, err := build.Graph.Complete(result.TaskID, result.State, result.ExitCode, result.Error)
 	if err != nil {
-		return 0, fmt.Errorf("completing task %q: %w", result.TaskID, err)
+		return BuildCompletion{}, fmt.Errorf("completing task %q: %w", result.TaskID, err)
 	}
 
 	s.logger.Info("task completed",
@@ -213,8 +225,9 @@ func (s *Scheduler) HandleTaskResult(result TaskResultReport) (int, error) {
 	// Check if build is done.
 	if build.Graph.IsComplete() {
 		build.FinishedAt = time.Now()
+		passed := build.Graph.IsPassed()
 		state := "passed"
-		if !build.Graph.IsPassed() {
+		if !passed {
 			state = "failed"
 		}
 		s.logger.Info("build complete",
@@ -222,9 +235,10 @@ func (s *Scheduler) HandleTaskResult(result TaskResultReport) (int, error) {
 			"state", state,
 			"duration", build.FinishedAt.Sub(build.StartedAt),
 		)
+		return BuildCompletion{BuildID: build.ID, Passed: passed, Build: build}, nil
 	}
 
-	return len(newlyReady), nil
+	return BuildCompletion{}, nil
 }
 
 // CancelBuild cancels all non-terminal tasks in a build.

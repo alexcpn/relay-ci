@@ -11,22 +11,25 @@ import (
 	pb "github.com/ci-system/ci/gen/ci/v1"
 	"github.com/ci-system/ci/pkg/dag"
 	"github.com/ci-system/ci/pkg/scheduler"
+	"github.com/ci-system/ci/pkg/scm"
 	"github.com/ci-system/ci/pkg/worker"
 )
 
 // workerRegistryServer implements the WorkerRegistryService gRPC interface.
 type workerRegistryServer struct {
 	pb.UnimplementedWorkerRegistryServiceServer
-	registry *worker.Registry
-	sched    *scheduler.Scheduler
-	logger   *slog.Logger
+	registry  *worker.Registry
+	sched     *scheduler.Scheduler
+	scmRouter *scm.Router
+	logger    *slog.Logger
 }
 
-func newWorkerRegistryServer(reg *worker.Registry, sched *scheduler.Scheduler, logger *slog.Logger) *workerRegistryServer {
+func newWorkerRegistryServer(reg *worker.Registry, sched *scheduler.Scheduler, scmRouter *scm.Router, logger *slog.Logger) *workerRegistryServer {
 	return &workerRegistryServer{
-		registry: reg,
-		sched:    sched,
-		logger:   logger,
+		registry:  reg,
+		sched:     sched,
+		scmRouter: scmRouter,
+		logger:    logger,
 	}
 }
 
@@ -115,7 +118,7 @@ func (s *workerRegistryServer) ReportTaskResult(ctx context.Context, req *pb.Rep
 		return nil, status.Errorf(codes.NotFound, "no build found for task %q", taskID)
 	}
 
-	_, err := s.sched.HandleTaskResult(scheduler.TaskResultReport{
+	completion, err := s.sched.HandleTaskResult(scheduler.TaskResultReport{
 		BuildID:  buildID,
 		TaskID:   taskID,
 		State:    taskState,
@@ -124,6 +127,11 @@ func (s *workerRegistryServer) ReportTaskResult(ctx context.Context, req *pb.Rep
 	})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "handling task result: %v", err)
+	}
+
+	// If the build just finished, report final status to SCM.
+	if completion.BuildID != "" {
+		s.reportBuildCompletion(ctx, completion)
 	}
 
 	s.logger.Info("task result received",
@@ -135,6 +143,34 @@ func (s *workerRegistryServer) ReportTaskResult(ctx context.Context, req *pb.Rep
 	)
 
 	return &pb.ReportTaskResultResponse{}, nil
+}
+
+func (s *workerRegistryServer) reportBuildCompletion(ctx context.Context, c scheduler.BuildCompletion) {
+	b := c.Build
+	if b.SCMToken == "" || b.CommitSHA == "" || b.RepoFullName == "" {
+		return
+	}
+	client, ok := s.scmRouter.GetClient(b.SCMProvider)
+	if !ok {
+		return
+	}
+	state := scm.StatusSuccess
+	description := "Build passed"
+	if !c.Passed {
+		state = scm.StatusFailure
+		description = "Build failed"
+	}
+	if err := client.ReportStatus(ctx, b.SCMToken, scm.StatusReport{
+		Provider:     b.SCMProvider,
+		RepoFullName: b.RepoFullName,
+		CommitSHA:    b.CommitSHA,
+		State:        state,
+		Context:      "ci/build",
+		Description:  description,
+	}); err != nil {
+		s.logger.Warn("failed to report build completion to SCM",
+			"build_id", b.ID, "err", err)
+	}
 }
 
 func protoToTaskState(s pb.TaskState) dag.TaskState {
