@@ -44,12 +44,13 @@ func main() {
 
 	registryClient := pb.NewWorkerRegistryServiceClient(conn)
 	logClient := pb.NewLogServiceClient(conn)
+	secretsClient := pb.NewSecretsServiceClient(conn)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	// Create the task executor.
-	exec := newExecutor(registryClient, logClient, workerID, logger)
+	exec := newExecutor(registryClient, logClient, secretsClient, workerID, logger)
 
 	// Start the worker's gRPC server (master calls this to assign tasks).
 	workerGRPC := grpc.NewServer()

@@ -1,6 +1,8 @@
 package pipeline
 
 import (
+	"encoding/base64"
+	"fmt"
 	"strings"
 
 	"github.com/ci-system/ci/pkg/dag"
@@ -25,6 +27,9 @@ var defaultImages = map[string]string{
 
 	// SonarQube
 	"sonarqube": "sonarsource/sonar-scanner-cli:latest",
+
+	// Code review
+	"code-review": "python:3.12-slim",
 }
 
 // Default commands for built-in tools.
@@ -150,6 +155,119 @@ func commandsForScanner(tool SecurityTool) []string {
 
 	return []string{cmd}
 }
+
+// commandsForCodeReview returns the two commands that run the code review task:
+//  1. pip install the appropriate LLM SDK
+//  2. decode + execute the embedded Python script with config as env vars
+//
+// The script is base64-encoded to avoid shell quoting issues.
+func commandsForCodeReview(cfg *CodeReviewConfig) []string {
+	provider := cfg.Provider
+	if provider == "" {
+		provider = "anthropic"
+	}
+	baseBranch := cfg.BaseBranch
+	if baseBranch == "" {
+		baseBranch = "main"
+	}
+	promptPath := cfg.ReviewerPrompt
+	if promptPath == "" {
+		promptPath = "code-reviewer.md"
+	}
+	sdkPkg, defaultModel := "anthropic", "claude-sonnet-4-6"
+	switch provider {
+	case "openai":
+		sdkPkg, defaultModel = "openai", "gpt-4o"
+	case "ollama":
+		sdkPkg, defaultModel = "openai", "llama3.2"
+	}
+	model := cfg.Model
+	if model == "" {
+		model = defaultModel
+	}
+	ollamaURL := cfg.OllamaURL
+	if ollamaURL == "" {
+		ollamaURL = "http://localhost:11434"
+	}
+
+	encoded := base64.StdEncoding.EncodeToString([]byte(codeReviewScript))
+	install := fmt.Sprintf("pip install -q %s 2>/dev/null || true", sdkPkg)
+	run := fmt.Sprintf(
+		"echo '%s' | base64 -d | "+
+			"REVIEW_PROVIDER='%s' REVIEW_BASE_BRANCH='%s' REVIEW_PROMPT_PATH='%s' "+
+			"REVIEW_MODEL='%s' REVIEW_OLLAMA_URL='%s' CODE_REVIEW_SERVER_URL='%s' python3",
+		encoded, provider, baseBranch, promptPath, model, ollamaURL, cfg.ServerURL,
+	)
+	return []string{install, run}
+}
+
+// codeReviewScript is the Python script executed inside the review-pr container.
+// It supports four paths (checked in order):
+//  1. CODE_REVIEW_SERVER_URL set  → delegate to the agentic_codereview HTTP service
+//  2. REVIEW_PROVIDER=ollama      → call Ollama via OpenAI-compatible API
+//  3. REVIEW_PROVIDER=openai      → call OpenAI API
+//  4. REVIEW_PROVIDER=anthropic   → call Anthropic Claude API (default)
+var codeReviewScript = `import os, sys, subprocess
+
+def get_diff(base_branch):
+    subprocess.run(['git', 'fetch', '--depth=50', 'origin', base_branch],
+        cwd='/workspace', capture_output=True)
+    diff = subprocess.run(['git', 'diff', 'origin/' + base_branch + '...HEAD'],
+        cwd='/workspace', capture_output=True, text=True).stdout
+    if not diff.strip():
+        diff = subprocess.run(['git', 'diff', 'HEAD~1'],
+            cwd='/workspace', capture_output=True, text=True).stdout
+    return diff
+
+def get_prompt(path):
+    try:
+        return open(os.path.join('/workspace', path)).read()
+    except FileNotFoundError:
+        return ("You are a code reviewer. Review the following diff for correctness, "
+                "security, and quality. Categorize issues as Critical, Important, or Minor.")
+
+base_branch = os.environ.get('REVIEW_BASE_BRANCH', 'main')
+prompt_path = os.environ.get('REVIEW_PROMPT_PATH', 'code-reviewer.md')
+model       = os.environ.get('REVIEW_MODEL', 'claude-sonnet-4-6')
+provider    = os.environ.get('REVIEW_PROVIDER', 'anthropic')
+server_url  = os.environ.get('CODE_REVIEW_SERVER_URL', '')
+ollama_url  = os.environ.get('REVIEW_OLLAMA_URL', 'http://localhost:11434')
+
+if server_url:
+    import urllib.request, urllib.parse
+    params = urllib.parse.urlencode({
+        'repo_url':  os.environ.get('REPO_URL', ''),
+        'pr_number': os.environ.get('PR_NUMBER', ''),
+    })
+    with urllib.request.urlopen(server_url + '/review?' + params, timeout=300) as r:
+        print(r.read().decode())
+    sys.exit(0)
+
+diff = get_diff(base_branch)
+if not diff.strip():
+    print("Nothing to review: no diff found.")
+    sys.exit(0)
+
+prompt  = get_prompt(prompt_path)
+content = prompt + "\n\n## Diff\n\n" + diff
+
+if provider in ('ollama', 'openai'):
+    import openai
+    kwargs = dict(model=model, messages=[{"role": "user", "content": content}], max_tokens=4096)
+    if provider == 'ollama':
+        client = openai.OpenAI(base_url=ollama_url + '/v1', api_key='ollama')
+    else:
+        client = openai.OpenAI(api_key=os.environ['OPENAI_API_KEY'])
+    print(client.chat.completions.create(**kwargs).choices[0].message.content)
+    sys.exit(0)
+
+import anthropic
+client = anthropic.Anthropic(api_key=os.environ['ANTHROPIC_API_KEY'])
+msg = client.messages.create(
+    model=model, max_tokens=4096,
+    messages=[{"role": "user", "content": content}])
+print(msg.content[0].text)
+`
 
 // commandsForSonar builds the sonar-scanner shell command string.
 // Returns a single-element []string containing the full shell command.

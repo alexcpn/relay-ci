@@ -94,9 +94,47 @@ type Triggers struct {
 
 // Integrations configure external tool integrations.
 type Integrations struct {
-	SonarQube *SonarQubeConfig `yaml:"sonarqube" json:"sonarqube,omitempty"`
-	Linters   *LinterConfig    `yaml:"linters" json:"linters,omitempty"`
-	Security  *SecurityConfig  `yaml:"security" json:"security,omitempty"`
+	SonarQube  *SonarQubeConfig  `yaml:"sonarqube" json:"sonarqube,omitempty"`
+	Linters    *LinterConfig     `yaml:"linters" json:"linters,omitempty"`
+	Security   *SecurityConfig   `yaml:"security" json:"security,omitempty"`
+	CodeReview *CodeReviewConfig `yaml:"code_review" json:"code_review,omitempty"`
+}
+
+// CodeReviewConfig configures AI-powered code review.
+type CodeReviewConfig struct {
+	// Enabled toggles code review.
+	Enabled bool `yaml:"enabled" json:"enabled"`
+
+	// Provider selects the LLM backend: "anthropic" (default), "openai", "ollama".
+	// Ignored when ServerURL is set.
+	Provider string `yaml:"provider" json:"provider"`
+
+	// APIKeySecret is the secret name holding the LLM API key.
+	// Not required for Ollama (which uses no auth by default).
+	APIKeySecret string `yaml:"api_key_secret" json:"api_key_secret"`
+
+	// Model is the model name to use.
+	// Defaults: anthropic→claude-sonnet-4-6, openai→gpt-4o, ollama→llama3.2
+	Model string `yaml:"model" json:"model"`
+
+	// OllamaURL is the base URL for the Ollama server (default: http://localhost:11434).
+	// Only used when Provider is "ollama".
+	OllamaURL string `yaml:"ollama_url" json:"ollama_url"`
+
+	// ReviewerPrompt is the path to the reviewer prompt file relative to the
+	// repo root (default: code-reviewer.md).
+	ReviewerPrompt string `yaml:"reviewer_prompt" json:"reviewer_prompt"`
+
+	// BaseBranch is the branch to diff against (default: main).
+	BaseBranch string `yaml:"base_branch" json:"base_branch"`
+
+	// ServerURL is the optional URL of an external agentic code review service
+	// (e.g. the agentic_codereview HTTP API). When set, all LLM config is ignored
+	// and the service is called with repo_url + pr_number instead.
+	ServerURL string `yaml:"server_url" json:"server_url"`
+
+	// Image overrides the default container image.
+	Image string `yaml:"image" json:"image"`
 }
 
 // SonarQubeConfig configures SonarQube analysis.

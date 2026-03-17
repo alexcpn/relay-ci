@@ -75,6 +75,9 @@ func BuildGraph(cfg *Config) (*dag.Graph, error) {
 	if err := addSecurityTasks(g, cfg); err != nil {
 		return nil, err
 	}
+	if err := addCodeReviewTask(g, cfg); err != nil {
+		return nil, err
+	}
 
 	if err := g.Validate(); err != nil {
 		return nil, fmt.Errorf("pipeline validation: %w", err)
@@ -238,6 +241,52 @@ func addSonarTask(g *dag.Graph, cfg *Config) error {
 		}
 	}
 
+	return nil
+}
+
+// addCodeReviewTask generates the AI-powered code review task.
+// The task runs after "clone" and calls an LLM with the PR diff and the
+// project's code-reviewer.md prompt file.
+func addCodeReviewTask(g *dag.Graph, cfg *Config) error {
+	cr := cfg.Integrations.CodeReview
+	if cr == nil || !cr.Enabled {
+		return nil
+	}
+
+	provider := cr.Provider
+	if provider == "" {
+		provider = "anthropic"
+	}
+
+	// Ollama needs no API key; all other providers require one unless
+	// delegating to an external review service.
+	if cr.ServerURL == "" && provider != "ollama" && cr.APIKeySecret == "" {
+		return fmt.Errorf("code_review: api_key_secret is required for provider %q (or set server_url)", provider)
+	}
+
+	var secretRefs []string
+	if cr.APIKeySecret != "" {
+		secretRefs = append(secretRefs, cr.APIKeySecret)
+	}
+
+	task := &dag.Task{
+		ID:             "review-pr",
+		Name:           "code review",
+		ContainerImage: imageForTool("code-review", cr.Image),
+		Commands:       commandsForCodeReview(cr),
+		CPUMillicores:  cfg.Defaults.CPUMillicores,
+		MemoryMB:       512,
+		DiskMB:         cfg.Defaults.DiskMB,
+		TimeoutSeconds: 600,
+		SecretRefs:     secretRefs,
+	}
+
+	if err := g.AddTask(task); err != nil {
+		return fmt.Errorf("adding review-pr task: %w", err)
+	}
+	if _, exists := g.GetTask("clone"); exists {
+		g.AddEdge("clone", "review-pr")
+	}
 	return nil
 }
 

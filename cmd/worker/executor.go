@@ -19,6 +19,7 @@ import (
 type executor struct {
 	registryClient pb.WorkerRegistryServiceClient
 	logClient      pb.LogServiceClient
+	secretsClient  pb.SecretsServiceClient
 	workerID       string
 	logger         *slog.Logger
 
@@ -29,12 +30,14 @@ type executor struct {
 func newExecutor(
 	registryClient pb.WorkerRegistryServiceClient,
 	logClient pb.LogServiceClient,
+	secretsClient pb.SecretsServiceClient,
 	workerID string,
 	logger *slog.Logger,
 ) *executor {
 	return &executor{
 		registryClient: registryClient,
 		logClient:      logClient,
+		secretsClient:  secretsClient,
 		workerID:       workerID,
 		logger:         logger,
 		runningTasks:   make(map[string]context.CancelFunc),
@@ -79,6 +82,21 @@ func (e *executor) executeTask(ctx context.Context, req *pb.AssignTaskRequest) {
 		var timeoutCancel context.CancelFunc
 		taskCtx, timeoutCancel = context.WithTimeout(taskCtx, time.Duration(req.Resources.TimeoutSeconds)*time.Second)
 		defer timeoutCancel()
+	}
+
+	// Fetch secrets from master and merge into task env before execution.
+	if len(req.SecretRefs) > 0 {
+		fetched, err := e.fetchSecrets(taskCtx, req)
+		if err != nil {
+			e.pushLog(taskID, buildID, fmt.Sprintf("[system] warning: could not fetch secrets: %v", err), pb.LogStream_LOG_STREAM_SYSTEM)
+		} else {
+			if req.Env == nil {
+				req.Env = make(map[string]string)
+			}
+			for k, v := range fetched {
+				req.Env[k] = v
+			}
+		}
 	}
 
 	// Try Docker first, fall back to shell execution.
@@ -288,6 +306,20 @@ func (e *executor) cancelTask(taskID string) {
 	if cancel, ok := e.runningTasks[taskID]; ok {
 		cancel()
 	}
+}
+
+// fetchSecrets calls the master's SecretsService and returns secret name→value pairs.
+func (e *executor) fetchSecrets(ctx context.Context, req *pb.AssignTaskRequest) (map[string]string, error) {
+	resp, err := e.secretsClient.GetSecrets(ctx, &pb.GetSecretsRequest{
+		WorkerId:    &pb.WorkerID{Id: e.workerID},
+		TaskId:      req.TaskId,
+		BuildId:     req.BuildId,
+		SecretNames: req.SecretRefs,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Secrets, nil
 }
 
 // sanitiseVolumeName converts an arbitrary cache key into a valid Docker

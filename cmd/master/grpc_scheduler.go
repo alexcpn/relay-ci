@@ -47,6 +47,7 @@ func (s *schedulerServer) SubmitBuild(ctx context.Context, req *pb.SubmitBuildRe
 		"REPO_URL":   req.Source.RepoUrl,
 		"BRANCH":     req.Source.Branch,
 		"COMMIT_SHA": req.Source.CommitSha,
+		"PR_NUMBER":  req.Source.PrNumber,
 	}
 	for _, task := range g.Tasks() {
 		if task.Env == nil {

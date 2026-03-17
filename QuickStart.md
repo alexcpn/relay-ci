@@ -38,6 +38,42 @@ Three binaries land in `bin/`:
 - `bin/ci-worker` — task executor
 - `bin/ci-cli` — command line client
 
+## 1a. Secrets
+
+Secrets (API keys, tokens) are stored in-memory on the master and injected into
+task containers at runtime. They are never written to logs.
+
+**Option A — CLI (persists until master restarts):**
+```bash
+echo "sk-ant-api03-..." | ./bin/ci-cli secret set ANTHROPIC_API_KEY
+echo "sk-..."           | ./bin/ci-cli secret set OPENAI_API_KEY
+
+./bin/ci-cli secret list          # show stored secret names
+./bin/ci-cli secret delete NAME   # remove a secret
+```
+
+**Option B — `.secrets.env` file (auto-loaded on every master start):**
+```bash
+cat >> .secrets.env <<'EOF'
+ANTHROPIC_API_KEY=sk-ant-api03-...
+OPENAI_API_KEY=sk-...
+EOF
+
+echo ".secrets.env" >> .gitignore   # never commit this file
+./bin/ci-master                     # loads .secrets.env automatically
+```
+
+In `pipeline.yaml`, reference secrets by name:
+```yaml
+integrations:
+  code_review:
+    enabled: true
+    api_key_secret: ANTHROPIC_API_KEY
+```
+
+> Secrets are stored in-memory only. They are lost when the master restarts.
+> Use `.secrets.env` (option B) for automatic reloading.
+
 ## 2. Start the Master
 
 ```bash

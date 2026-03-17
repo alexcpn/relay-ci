@@ -1,4 +1,4 @@
-# Relay CI - A CI for AI
+# Relay CI - A CI for AI Workflows
 
 ## A fast, parallel, AI-native CI system built specifically for Agentic Workflows.
 

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/ci-system/ci/pkg/logstore"
 	"github.com/ci-system/ci/pkg/scheduler"
 	"github.com/ci-system/ci/pkg/scm"
+	"github.com/ci-system/ci/pkg/secrets"
 	"github.com/ci-system/ci/pkg/worker"
 )
 
@@ -30,6 +32,10 @@ func main() {
 	webhookSecret := os.Getenv("WEBHOOK_SECRET")
 
 	// --- Initialize components ---
+
+	// Secrets store: load from .secrets.env (or SECRETS_FILE) on startup.
+	secretStore := secrets.NewStore()
+	loadSecretsFile(secretStore, logger)
 
 	registry := worker.NewRegistry(30 * time.Second)
 	logs := logstore.New()
@@ -54,6 +60,7 @@ func main() {
 	pb.RegisterSchedulerServiceServer(grpcServer, newSchedulerServer(sched))
 	pb.RegisterWorkerRegistryServiceServer(grpcServer, newWorkerRegistryServer(registry, sched, logger))
 	pb.RegisterLogServiceServer(grpcServer, newLogServer(logs))
+	pb.RegisterSecretsServiceServer(grpcServer, newSecretsServer(secretStore))
 
 	// --- HTTP server (webhooks + log viewer) ---
 
@@ -142,4 +149,40 @@ func envOrDefault(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// loadSecretsFile parses a KEY=VALUE file and seeds the secrets store.
+// The file path defaults to ".secrets.env" but can be overridden with
+// the SECRETS_FILE environment variable. Missing file is silently ignored.
+func loadSecretsFile(store *secrets.Store, logger *slog.Logger) {
+	path := envOrDefault("SECRETS_FILE", ".secrets.env")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return // file absent — normal for most deployments
+	}
+
+	loaded := 0
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		name, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		name = strings.TrimSpace(name)
+		value = strings.TrimSpace(value)
+		if name == "" || value == "" {
+			continue
+		}
+		if err := store.Put("global", name, value, "env-file"); err != nil {
+			logger.Warn("failed to load secret from file", "name", name, "err", err)
+			continue
+		}
+		loaded++
+	}
+	if loaded > 0 {
+		logger.Info("loaded secrets from file", "path", path, "count", loaded)
+	}
 }

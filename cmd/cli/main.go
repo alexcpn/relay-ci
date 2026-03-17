@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -44,6 +45,8 @@ func main() {
 		cmdLogs(ctx, conn)
 	case "watch":
 		cmdWatch(ctx, conn)
+	case "secret":
+		cmdSecret(ctx, conn)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", os.Args[1])
 		printUsage()
@@ -257,6 +260,79 @@ func cmdWatch(ctx context.Context, conn *grpc.ClientConn) {
 	}
 }
 
+// cmdSecret handles the "secret" subcommand: set, list, delete.
+func cmdSecret(ctx context.Context, conn *grpc.ClientConn) {
+	if len(os.Args) < 3 {
+		fmt.Fprintln(os.Stderr, "usage: ci secret <set|list|delete> [args]")
+		os.Exit(1)
+	}
+
+	client := pb.NewSecretsServiceClient(conn)
+
+	switch os.Args[2] {
+	case "set":
+		// ci secret set <name>  — reads value from stdin
+		if len(os.Args) < 4 {
+			fmt.Fprintln(os.Stderr, "usage: ci secret set <name>  (pipe value via stdin)")
+			os.Exit(1)
+		}
+		name := os.Args[3]
+		valueBytes, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error reading value from stdin: %v\n", err)
+			os.Exit(1)
+		}
+		value := strings.TrimRight(string(valueBytes), "\r\n")
+		if value == "" {
+			fmt.Fprintln(os.Stderr, "error: secret value is empty (pipe the value via stdin)")
+			os.Exit(1)
+		}
+		_, err = client.PutSecret(ctx, &pb.PutSecretRequest{Name: name, Value: value})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Secret %q stored.\n", name)
+
+	case "list", "ls":
+		// ci secret list
+		resp, err := client.ListSecrets(ctx, &pb.ListSecretsRequest{})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		if len(resp.Secrets) == 0 {
+			fmt.Println("No secrets stored.")
+			return
+		}
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(w, "NAME\tSCOPE\tCREATED BY")
+		for _, s := range resp.Secrets {
+			fmt.Fprintf(w, "%s\t%s\t%s\n", s.Name, s.Scope, s.CreatedBy)
+		}
+		w.Flush()
+
+	case "delete", "rm":
+		// ci secret delete <name>
+		if len(os.Args) < 4 {
+			fmt.Fprintln(os.Stderr, "usage: ci secret delete <name>")
+			os.Exit(1)
+		}
+		name := os.Args[3]
+		_, err := client.DeleteSecret(ctx, &pb.DeleteSecretRequest{Name: name})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Secret %q deleted.\n", name)
+
+	default:
+		fmt.Fprintf(os.Stderr, "unknown secret command: %s\n", os.Args[2])
+		fmt.Fprintln(os.Stderr, "usage: ci secret <set|list|delete> [args]")
+		os.Exit(1)
+	}
+}
+
 func printUsage() {
 	fmt.Fprintln(os.Stderr, `ci - CI/CD system command line tool
 
@@ -267,6 +343,9 @@ Usage:
   ci cancel <build-id>
   ci logs <build-id> <task-id> [--follow]
   ci watch <build-id>
+  ci secret set <name>          store a secret (pipe value via stdin)
+  ci secret list                list secret names
+  ci secret delete <name>       remove a secret
 
 Environment:
   CI_MASTER  Master address (default: localhost:9090)`)
