@@ -223,7 +223,10 @@ func commandsForCodeReview(cfg *CodeReviewConfig) []string {
 //  2. REVIEW_PROVIDER=ollama      → call Ollama via OpenAI-compatible API
 //  3. REVIEW_PROVIDER=openai      → call OpenAI API
 //  4. REVIEW_PROVIDER=anthropic   → call Anthropic Claude API (default)
-var codeReviewScript = `import os, sys, re, subprocess
+var codeReviewScript = `# NOTE: This Python script is stored as a Go raw string literal in
+# pkg/pipeline/defaults.go and base64-encoded at runtime into the review-pr
+# container command. Edits here are edits to Python, not Go.
+import os, sys, re, subprocess
 
 def get_diff(base_branch):
     # Deepen history enough to find the merge base with the target branch.
@@ -266,7 +269,8 @@ def check_verdict(review_text, fail_on_critical):
     if m:
         body = m.group(1).strip()
         # Ignore empty, placeholder lines like "[Bugs, security issues...]", or explicit "None"/"None."
-        if body and not re.match(r'^(\[.*\]|[Nn]one\.?)$', body):
+        # re.fullmatch with IGNORECASE handles None/none/NONE variants unambiguously.
+        if body and not re.fullmatch(r'\[.*\]|none\.?', body, re.IGNORECASE):
             return True, "Critical issues found — see review above"
 
     return False, ""
