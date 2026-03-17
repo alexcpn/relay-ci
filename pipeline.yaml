@@ -40,7 +40,10 @@ tasks:
 
   - id: build
     commands:
-      - make build
+      - go build -o bin/ci-master ./cmd/master
+      - go build -o bin/ci-worker ./cmd/worker
+      - go build -o bin/ci-cli ./cmd/cli
+      - go build -o bin/ci-mcp ./cmd/mcp
     depends_on: [proto]
     cache:
       - key: go-mod-{{ checksum "go.sum" }}
@@ -51,6 +54,8 @@ tasks:
     commands:
       - go test -race -count=1 ./...
     depends_on: [proto]
+    env:
+      CGO_ENABLED: "1"
     cache:
       - key: go-mod-{{ checksum "go.sum" }}
         path: /go/pkg/mod
@@ -64,6 +69,7 @@ integrations:
     enabled: true
     tools:
       - name: golangci-lint
+        image: golangci/golangci-lint:latest
 
   security:
     enabled: true
