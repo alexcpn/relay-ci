@@ -155,8 +155,8 @@ func (s *mcpServer) toolGetTaskLogs(ctx context.Context, args json.RawMessage) *
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("## Logs for task: %s (build: %s)\n", params.TaskID, params.BuildID))
-	sb.WriteString(fmt.Sprintf("Total lines: %d\n\n```\n", resp.TotalLines))
+	fmt.Fprintf(&sb, "## Logs for task: %s (build: %s)\n", params.TaskID, params.BuildID)
+	fmt.Fprintf(&sb, "Total lines: %d\n\n```\n", resp.TotalLines)
 
 	for _, line := range lines {
 		prefix := ""
@@ -191,11 +191,11 @@ func (s *mcpServer) toolDiagnoseBuild(ctx context.Context, args json.RawMessage)
 
 	b := resp.Build
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("## Build Diagnosis: %s\n\n", b.BuildId.Id))
-	sb.WriteString(fmt.Sprintf("**Overall State:** %s\n", b.State))
+	fmt.Fprintf(&sb, "## Build Diagnosis: %s\n\n", b.BuildId.Id)
+	fmt.Fprintf(&sb, "**Overall State:** %s\n", b.State)
 
 	if b.Source != nil {
-		sb.WriteString(fmt.Sprintf("**Repo:** %s @ %s (%s)\n\n", b.Source.RepoUrl, b.Source.CommitSha, b.Source.Branch))
+		fmt.Fprintf(&sb, "**Repo:** %s @ %s (%s)\n\n", b.Source.RepoUrl, b.Source.CommitSha, b.Source.Branch)
 	}
 
 	// Find failed tasks.
@@ -225,7 +225,7 @@ func (s *mcpServer) toolDiagnoseBuild(ctx context.Context, args json.RawMessage)
 	if len(runningTasks) > 0 {
 		sb.WriteString("### Still Running\n")
 		for _, t := range runningTasks {
-			sb.WriteString(fmt.Sprintf("- **%s** (id: %s) — %s\n", t.Name, t.TaskId.Id, t.State))
+			fmt.Fprintf(&sb, "- **%s** (id: %s) — %s\n", t.Name, t.TaskId.Id, t.State)
 		}
 		sb.WriteString("\n")
 	}
@@ -233,12 +233,12 @@ func (s *mcpServer) toolDiagnoseBuild(ctx context.Context, args json.RawMessage)
 	if len(failedTasks) > 0 {
 		sb.WriteString("### Failed Tasks\n\n")
 		for _, t := range failedTasks {
-			sb.WriteString(fmt.Sprintf("#### ❌ %s (id: %s)\n", t.Name, t.TaskId.Id))
-			sb.WriteString(fmt.Sprintf("- **State:** %s\n", t.State))
+			fmt.Fprintf(&sb, "#### ❌ %s (id: %s)\n", t.Name, t.TaskId.Id)
+			fmt.Fprintf(&sb, "- **State:** %s\n", t.State)
 			if t.Result != nil {
-				sb.WriteString(fmt.Sprintf("- **Exit code:** %d\n", t.Result.ExitCode))
+				fmt.Fprintf(&sb, "- **Exit code:** %d\n", t.Result.ExitCode)
 				if t.Result.ErrorMessage != "" {
-					sb.WriteString(fmt.Sprintf("- **Error:** %s\n", t.Result.ErrorMessage))
+					fmt.Fprintf(&sb, "- **Error:** %s\n", t.Result.ErrorMessage)
 				}
 			}
 
@@ -269,7 +269,7 @@ func (s *mcpServer) toolDiagnoseBuild(ctx context.Context, args json.RawMessage)
 				for i, d := range t.DependsOn {
 					deps[i] = d.Id
 				}
-				sb.WriteString(fmt.Sprintf("- **Depended on:** %s\n", strings.Join(deps, ", ")))
+				fmt.Fprintf(&sb, "- **Depended on:** %s\n", strings.Join(deps, ", "))
 			}
 			sb.WriteString("\n")
 		}
@@ -278,20 +278,20 @@ func (s *mcpServer) toolDiagnoseBuild(ctx context.Context, args json.RawMessage)
 	if len(skippedTasks) > 0 {
 		sb.WriteString("### Skipped Tasks (due to upstream failure)\n")
 		for _, t := range skippedTasks {
-			sb.WriteString(fmt.Sprintf("- %s\n", t.Name))
+			fmt.Fprintf(&sb, "- %s\n", t.Name)
 		}
 		sb.WriteString("\n")
 	}
 
 	sb.WriteString("### Summary\n")
-	sb.WriteString(fmt.Sprintf("- ✅ Passed: %d\n", len(passedTasks)))
-	sb.WriteString(fmt.Sprintf("- ❌ Failed: %d\n", len(failedTasks)))
-	sb.WriteString(fmt.Sprintf("- ⏭️ Skipped: %d\n", len(skippedTasks)))
-	sb.WriteString(fmt.Sprintf("- ⏳ Running: %d\n", len(runningTasks)))
+	fmt.Fprintf(&sb, "- ✅ Passed: %d\n", len(passedTasks))
+	fmt.Fprintf(&sb, "- ❌ Failed: %d\n", len(failedTasks))
+	fmt.Fprintf(&sb, "- ⏭️ Skipped: %d\n", len(skippedTasks))
+	fmt.Fprintf(&sb, "- ⏳ Running: %d\n", len(runningTasks))
 
 	if len(failedTasks) > 0 {
-		sb.WriteString(fmt.Sprintf("\n**Root cause:** Task `%s` failed first. ", failedTasks[0].Name))
-		sb.WriteString(fmt.Sprintf("Use `suggest_fix` with task_id `%s` for remediation advice.\n", failedTasks[0].TaskId.Id))
+		fmt.Fprintf(&sb, "\n**Root cause:** Task `%s` failed first. ", failedTasks[0].Name)
+		fmt.Fprintf(&sb, "Use `suggest_fix` with task_id `%s` for remediation advice.\n", failedTasks[0].TaskId.Id)
 	}
 
 	return textResult(sb.String())
@@ -414,10 +414,10 @@ func (s *mcpServer) toolGetFailedBuilds(ctx context.Context, args json.RawMessag
 			}
 		}
 
-		sb.WriteString(fmt.Sprintf("### %s — FAILED\n", b.BuildId.Id))
-		sb.WriteString(fmt.Sprintf("- Repo: %s | Branch: %s\n", repo, branch))
-		sb.WriteString(fmt.Sprintf("- Trigger: %s\n", b.TriggeredBy))
-		sb.WriteString(fmt.Sprintf("- Failed tasks (%d): %s\n", failedCount, strings.Join(failedNames, ", ")))
+		fmt.Fprintf(&sb, "### %s — FAILED\n", b.BuildId.Id)
+		fmt.Fprintf(&sb, "- Repo: %s | Branch: %s\n", repo, branch)
+		fmt.Fprintf(&sb, "- Trigger: %s\n", b.TriggeredBy)
+		fmt.Fprintf(&sb, "- Failed tasks (%d): %s\n", failedCount, strings.Join(failedNames, ", "))
 		sb.WriteString("\n")
 	}
 
@@ -470,12 +470,12 @@ func (s *mcpServer) toolSuggestFix(ctx context.Context, args json.RawMessage) *m
 	})
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("## Fix Suggestion for: %s\n\n", task.Name))
-	sb.WriteString(fmt.Sprintf("**Task:** %s (id: %s)\n", task.Name, task.TaskId.Id))
-	sb.WriteString(fmt.Sprintf("**Image:** %s\n", task.ContainerImage))
-	sb.WriteString(fmt.Sprintf("**Commands:** %s\n", strings.Join(task.Commands, " && ")))
-	sb.WriteString(fmt.Sprintf("**Exit Code:** %d\n", task.Result.GetExitCode()))
-	sb.WriteString(fmt.Sprintf("**State:** %s\n\n", task.State))
+	fmt.Fprintf(&sb, "## Fix Suggestion for: %s\n\n", task.Name)
+	fmt.Fprintf(&sb, "**Task:** %s (id: %s)\n", task.Name, task.TaskId.Id)
+	fmt.Fprintf(&sb, "**Image:** %s\n", task.ContainerImage)
+	fmt.Fprintf(&sb, "**Commands:** %s\n", strings.Join(task.Commands, " && "))
+	fmt.Fprintf(&sb, "**Exit Code:** %d\n", task.Result.GetExitCode())
+	fmt.Fprintf(&sb, "**State:** %s\n\n", task.State)
 
 	// Classify the error type and extract relevant lines.
 	errorType := "unknown"
@@ -515,7 +515,7 @@ func (s *mcpServer) toolSuggestFix(ctx context.Context, args json.RawMessage) *m
 		errorType = "disk_space"
 	}
 
-	sb.WriteString(fmt.Sprintf("### Error Classification: **%s**\n\n", errorType))
+	fmt.Fprintf(&sb, "### Error Classification: **%s**\n\n", errorType)
 
 	// Provide specific advice based on error type.
 	switch errorType {
@@ -597,8 +597,8 @@ func (s *mcpServer) toolSuggestFix(ctx context.Context, args json.RawMessage) *m
 		sb.WriteString("\n*No logs available for this task.*\n")
 	}
 
-	sb.WriteString(fmt.Sprintf("\n---\nAfter fixing, use `submit_build` with repo_url `%s` to re-trigger CI.\n",
-		buildResp.Build.Source.GetRepoUrl()))
+	fmt.Fprintf(&sb, "\n---\nAfter fixing, use `submit_build` with repo_url `%s` to re-trigger CI.\n",
+		buildResp.Build.Source.GetRepoUrl())
 
 	return textResult(sb.String())
 }
@@ -638,9 +638,9 @@ func (s *mcpServer) toolWatchBuild(ctx context.Context, args json.RawMessage) *m
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("## Build: %s\n", b.BuildId.Id))
-	sb.WriteString(fmt.Sprintf("**State:** %s\n", b.State))
-	sb.WriteString(fmt.Sprintf("**Progress:** %d%% (%d/%d tasks complete)\n\n", progress, completed, total))
+	fmt.Fprintf(&sb, "## Build: %s\n", b.BuildId.Id)
+	fmt.Fprintf(&sb, "**State:** %s\n", b.State)
+	fmt.Fprintf(&sb, "**Progress:** %d%% (%d/%d tasks complete)\n\n", progress, completed, total)
 
 	isActive := b.State == pb.BuildState_BUILD_STATE_RUNNING || b.State == pb.BuildState_BUILD_STATE_QUEUED
 
@@ -658,7 +658,7 @@ func (s *mcpServer) toolWatchBuild(ctx context.Context, args json.RawMessage) *m
 		case pb.TaskState_TASK_STATE_CANCELLED:
 			icon = "🚫"
 		}
-		sb.WriteString(fmt.Sprintf("%s %s — %s\n", icon, t.Name, t.State))
+		fmt.Fprintf(&sb, "%s %s — %s\n", icon, t.Name, t.State)
 	}
 
 	if isActive {
