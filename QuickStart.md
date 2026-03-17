@@ -251,7 +251,93 @@ curl http://localhost:8080/health
 # abc123def456    RUNNING  https://github.com/myorg/myrepo.git       main    webhook:you
 ```
 
-## 8. MCP Server (for AI Agents)
+## 8. AI Code Review
+
+Relay CI can automatically review every PR diff using an LLM and block merges when critical issues are found.
+
+### How it works
+
+When a build runs, a `review-pr` task:
+1. Checks out the repo, deepens history to find the merge base with `base_branch`
+2. Produces the full PR diff (`git diff origin/main...HEAD`)
+3. Sends the diff + your `code-reviewer.md` prompt to the LLM
+4. Parses the response for a **Ready to merge?** verdict and a **Critical** issues section
+5. Exits non-zero (failing the build) if the verdict is `No` or `With fixes`, or if Critical issues are present
+
+### Configure in `pipeline.yaml`
+
+```yaml
+integrations:
+  code_review:
+    enabled: true
+    provider: anthropic          # "anthropic" (default), "openai", or "ollama"
+    api_key_secret: ANTHROPIC_API_KEY   # name of the secret set via ci-cli
+    model: claude-sonnet-4-6     # optional, uses provider default if omitted
+    base_branch: main            # diff target (default: main)
+    reviewer_prompt: code-reviewer.md   # path in repo root (default: code-reviewer.md)
+    fail_on_critical: true       # exit 1 on No/With-fixes verdict (default: true)
+```
+
+### Provider options
+
+| Provider | `provider` value | Secret required | Default model |
+|---|---|---|---|
+| Anthropic Claude | `anthropic` | `ANTHROPIC_API_KEY` | `claude-sonnet-4-6` |
+| OpenAI | `openai` | `OPENAI_API_KEY` | `gpt-4o` |
+| Ollama (local) | `ollama` | none | `llama3.2` |
+| Agentic service | — | none | set `server_url` |
+
+For Ollama, add `ollama_url` if it's not on localhost:
+```yaml
+  code_review:
+    enabled: true
+    provider: ollama
+    ollama_url: http://192.168.1.10:11434
+    model: llama3.2
+```
+
+To delegate to an external agentic code review service (e.g. [agentic_codereview](https://github.com/agentic-ai-demos/agentic_codereview)):
+```yaml
+  code_review:
+    enabled: true
+    server_url: http://your-review-service:8000
+```
+
+### Set the API key
+
+```bash
+# Live (lost on master restart)
+echo "sk-ant-..." | ./bin/ci-cli secret set ANTHROPIC_API_KEY
+
+# Persistent — auto-loaded on every master start
+echo "ANTHROPIC_API_KEY=sk-ant-..." >> .secrets.env
+echo ".secrets.env" >> .gitignore
+```
+
+### Reviewer prompt
+
+Create `code-reviewer.md` in your repo root to guide the review. The LLM will use this as its system prompt. At minimum, end it with:
+
+```markdown
+End your review with a line: **Ready to merge?** Yes / No / With fixes
+```
+
+If the file is absent, a built-in default prompt is used.
+
+### Pass/fail logic
+
+| LLM output | `fail_on_critical: true` | `fail_on_critical: false` |
+|---|---|---|
+| **Ready to merge?** Yes | pass | pass |
+| **Ready to merge?** No | fail | pass |
+| **Ready to merge?** With fixes | fail | pass |
+| Non-empty `#### Critical` section | fail | pass |
+
+Set `fail_on_critical: false` for advisory-only reviews that never block a merge.
+
+---
+
+## 9. MCP Server (for AI Agents)
 
 The MCP server lets AI agents (Claude, etc.) monitor builds, diagnose failures, and suggest fixes.
 
