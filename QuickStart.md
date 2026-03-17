@@ -2,6 +2,19 @@
 
 Get Relay CI running on Linux and trigger a build from a GitHub repo.
 
+## Prerequisites
+
+| Dependency | Purpose | Install |
+|---|---|---|
+| **Go 1.24+** | Build all binaries | `wget https://go.dev/dl/...` or `brew install go` |
+| **protoc** | Generate Go code from `.proto` files (build-time only) | `apt-get install protobuf-compiler` / `brew install protobuf` |
+| **protoc-gen-go** | Go plugin for protoc (build-time only) | `go install google.golang.org/protobuf/cmd/protoc-gen-go@latest` |
+| **protoc-gen-go-grpc** | gRPC Go plugin for protoc (build-time only) | `go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest` |
+| **Docker** | Run tasks in containers (worker machines only, runtime) | [docs.docker.com/get-docker](https://docs.docker.com/get-docker/) |
+
+> `protoc` and its plugins are only needed to build from source.
+> They are not required at runtime.
+
 ## 1. Build
 
 ```bash
@@ -9,6 +22,10 @@ Get Relay CI running on Linux and trigger a build from a GitHub repo.
 wget -q https://go.dev/dl/go1.24.1.linux-amd64.tar.gz -O /tmp/go.tar.gz
 mkdir -p ~/go-sdk && tar -C ~/go-sdk -xzf /tmp/go.tar.gz && rm /tmp/go.tar.gz
 export PATH=$HOME/go-sdk/go/bin:$HOME/go/bin:$PATH
+
+# Install protoc Go plugins
+go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
 
 # Clone and build
 git clone https://github.com/ci-system/ci.git && cd ci

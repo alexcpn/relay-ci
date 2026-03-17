@@ -170,6 +170,14 @@ Docker container    Docker container
 
 ## Quick Start
 
+### Prerequisites
+
+| Dependency | Required on | Notes |
+|---|---|---|
+| Go 1.24+ | Build machine | Fetches all Go module deps automatically |
+| protoc + plugins | Build machine | Build-time only — generates `gen/ci/v1/` from `.proto` files |
+| Docker | Worker machines | Tasks execute in containers; worker falls back to shell if absent |
+
 ### Single machine (all services)
 
 ```bash
