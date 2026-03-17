@@ -76,14 +76,14 @@ func (s *mcpServer) toolGetBuild(ctx context.Context, args json.RawMessage) *mcp
 
 	b := resp.Build
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("## Build: %s\n", b.BuildId.Id))
-	sb.WriteString(fmt.Sprintf("**State:** %s\n", b.State))
+	fmt.Fprintf(&sb, "## Build: %s\n", b.BuildId.Id)
+	fmt.Fprintf(&sb, "**State:** %s\n", b.State)
 	if b.Source != nil {
-		sb.WriteString(fmt.Sprintf("**Repo:** %s\n", b.Source.RepoUrl))
-		sb.WriteString(fmt.Sprintf("**Branch:** %s\n", b.Source.Branch))
-		sb.WriteString(fmt.Sprintf("**Commit:** %s\n", b.Source.CommitSha))
+		fmt.Fprintf(&sb, "**Repo:** %s\n", b.Source.RepoUrl)
+		fmt.Fprintf(&sb, "**Branch:** %s\n", b.Source.Branch)
+		fmt.Fprintf(&sb, "**Commit:** %s\n", b.Source.CommitSha)
 	}
-	sb.WriteString(fmt.Sprintf("**Triggered by:** %s\n\n", b.TriggeredBy))
+	fmt.Fprintf(&sb, "**Triggered by:** %s\n\n", b.TriggeredBy)
 
 	if b.StartedAt != nil && b.FinishedAt != nil {
 		dur := b.FinishedAt.AsTime().Sub(b.StartedAt.AsTime())
