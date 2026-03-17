@@ -71,6 +71,7 @@ cmd_build() {
     "$GO" build -o "${SCRIPT_DIR}/bin/ci-master" ./cmd/master
     "$GO" build -o "${SCRIPT_DIR}/bin/ci-worker" ./cmd/worker
     "$GO" build -o "${SCRIPT_DIR}/bin/ci-mcp"    ./cmd/mcp
+    "$GO" build -o "${SCRIPT_DIR}/bin/ci-cli"    ./cmd/cli
     green "  build OK"
 }
 

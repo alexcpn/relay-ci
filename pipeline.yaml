@@ -80,3 +80,12 @@ integrations:
       - name: trivy
         severity: HIGH,CRITICAL
         fail_on_findings: true
+
+  code_review:
+    enabled: true
+    provider: anthropic          # or "openai" or "ollama"
+    api_key_secret: ANTHROPIC_API_KEY
+    model: claude-sonnet-4-6
+    base_branch: main
+    reviewer_prompt: code-reviewer.md
+    fail_on_critical: true       # exit 1 if verdict is No or Critical issues found

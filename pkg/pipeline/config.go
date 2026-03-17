@@ -133,6 +133,11 @@ type CodeReviewConfig struct {
 	// and the service is called with repo_url + pr_number instead.
 	ServerURL string `yaml:"server_url" json:"server_url"`
 
+	// FailOnCritical makes the task exit non-zero when the LLM verdict is
+	// "No" or when the response contains a non-empty Critical issues section.
+	// Defaults to true. Set to false for advisory-only reviews.
+	FailOnCritical *bool `yaml:"fail_on_critical" json:"fail_on_critical,omitempty"`
+
 	// Image overrides the default container image.
 	Image string `yaml:"image" json:"image"`
 }

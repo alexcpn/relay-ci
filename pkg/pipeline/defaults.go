@@ -189,14 +189,19 @@ func commandsForCodeReview(cfg *CodeReviewConfig) []string {
 	if ollamaURL == "" {
 		ollamaURL = "http://localhost:11434"
 	}
+	failOnCritical := "true"
+	if cfg.FailOnCritical != nil && !*cfg.FailOnCritical {
+		failOnCritical = "false"
+	}
 
 	encoded := base64.StdEncoding.EncodeToString([]byte(codeReviewScript))
 	install := fmt.Sprintf("pip install -q %s 2>/dev/null || true", sdkPkg)
 	run := fmt.Sprintf(
 		"echo '%s' | base64 -d | "+
 			"REVIEW_PROVIDER='%s' REVIEW_BASE_BRANCH='%s' REVIEW_PROMPT_PATH='%s' "+
-			"REVIEW_MODEL='%s' REVIEW_OLLAMA_URL='%s' CODE_REVIEW_SERVER_URL='%s' python3",
-		encoded, provider, baseBranch, promptPath, model, ollamaURL, cfg.ServerURL,
+			"REVIEW_MODEL='%s' REVIEW_OLLAMA_URL='%s' CODE_REVIEW_SERVER_URL='%s' "+
+			"REVIEW_FAIL_ON_CRITICAL='%s' python3",
+		encoded, provider, baseBranch, promptPath, model, ollamaURL, cfg.ServerURL, failOnCritical,
 	)
 	return []string{install, run}
 }
@@ -207,14 +212,17 @@ func commandsForCodeReview(cfg *CodeReviewConfig) []string {
 //  2. REVIEW_PROVIDER=ollama      → call Ollama via OpenAI-compatible API
 //  3. REVIEW_PROVIDER=openai      → call OpenAI API
 //  4. REVIEW_PROVIDER=anthropic   → call Anthropic Claude API (default)
-var codeReviewScript = `import os, sys, subprocess
+var codeReviewScript = `import os, sys, re, subprocess
 
 def get_diff(base_branch):
-    subprocess.run(['git', 'fetch', '--depth=50', 'origin', base_branch],
+    # Deepen history enough to find the merge base with the target branch.
+    # --update-shallow handles repos cloned with --depth=1.
+    subprocess.run(['git', 'fetch', '--deepen=200', '--update-shallow', 'origin', base_branch],
         cwd='/workspace', capture_output=True)
     diff = subprocess.run(['git', 'diff', 'origin/' + base_branch + '...HEAD'],
         cwd='/workspace', capture_output=True, text=True).stdout
     if not diff.strip():
+        # Fallback for branch pushes with no PR: show only the last commit.
         diff = subprocess.run(['git', 'diff', 'HEAD~1'],
             cwd='/workspace', capture_output=True, text=True).stdout
     return diff
@@ -224,14 +232,41 @@ def get_prompt(path):
         return open(os.path.join('/workspace', path)).read()
     except FileNotFoundError:
         return ("You are a code reviewer. Review the following diff for correctness, "
-                "security, and quality. Categorize issues as Critical, Important, or Minor.")
+                "security, and quality. Categorize issues as Critical, Important, or Minor.\n"
+                "End your review with a line: **Ready to merge?** Yes / No / With fixes")
 
-base_branch = os.environ.get('REVIEW_BASE_BRANCH', 'main')
-prompt_path = os.environ.get('REVIEW_PROMPT_PATH', 'code-reviewer.md')
-model       = os.environ.get('REVIEW_MODEL', 'claude-sonnet-4-6')
-provider    = os.environ.get('REVIEW_PROVIDER', 'anthropic')
-server_url  = os.environ.get('CODE_REVIEW_SERVER_URL', '')
-ollama_url  = os.environ.get('REVIEW_OLLAMA_URL', 'http://localhost:11434')
+def check_verdict(review_text, fail_on_critical):
+    """Return (should_fail, reason) based on the review text."""
+    if not fail_on_critical:
+        return False, ""
+
+    # Look for explicit verdict line: **Ready to merge?** <verdict>
+    m = re.search(r'\*\*Ready to merge\?\*\*\s*(.+)', review_text, re.IGNORECASE)
+    if m:
+        verdict = m.group(1).strip().lower()
+        if verdict.startswith('no'):
+            return True, "Reviewer verdict: NOT ready to merge"
+        if 'with fixes' in verdict:
+            return True, "Reviewer verdict: requires fixes before merging"
+
+    # Also fail if a non-empty Critical section exists.
+    # Match content between "#### Critical" and the next "####" or end.
+    m = re.search(r'####\s*Critical[^\n]*\n(.*?)(?=####|\Z)', review_text, re.DOTALL | re.IGNORECASE)
+    if m:
+        body = m.group(1).strip()
+        # Ignore empty or template placeholder lines like "[Bugs, security issues...]"
+        if body and not re.match(r'^\[.*\]$', body):
+            return True, "Critical issues found — see review above"
+
+    return False, ""
+
+base_branch      = os.environ.get('REVIEW_BASE_BRANCH', 'main')
+prompt_path      = os.environ.get('REVIEW_PROMPT_PATH', 'code-reviewer.md')
+model            = os.environ.get('REVIEW_MODEL', 'claude-sonnet-4-6')
+provider         = os.environ.get('REVIEW_PROVIDER', 'anthropic')
+server_url       = os.environ.get('CODE_REVIEW_SERVER_URL', '')
+ollama_url       = os.environ.get('REVIEW_OLLAMA_URL', 'http://localhost:11434')
+fail_on_critical = os.environ.get('REVIEW_FAIL_ON_CRITICAL', 'true').lower() == 'true'
 
 if server_url:
     import urllib.request, urllib.parse
@@ -240,7 +275,12 @@ if server_url:
         'pr_number': os.environ.get('PR_NUMBER', ''),
     })
     with urllib.request.urlopen(server_url + '/review?' + params, timeout=300) as r:
-        print(r.read().decode())
+        review = r.read().decode()
+    print(review)
+    should_fail, reason = check_verdict(review, fail_on_critical)
+    if should_fail:
+        print("\n[review] FAIL:", reason, file=sys.stderr)
+        sys.exit(1)
     sys.exit(0)
 
 diff = get_diff(base_branch)
@@ -258,15 +298,19 @@ if provider in ('ollama', 'openai'):
         client = openai.OpenAI(base_url=ollama_url + '/v1', api_key='ollama')
     else:
         client = openai.OpenAI(api_key=os.environ['OPENAI_API_KEY'])
-    print(client.chat.completions.create(**kwargs).choices[0].message.content)
-    sys.exit(0)
+    review = client.chat.completions.create(**kwargs).choices[0].message.content
+else:
+    import anthropic
+    client = anthropic.Anthropic(api_key=os.environ['ANTHROPIC_API_KEY'])
+    review = client.messages.create(
+        model=model, max_tokens=4096,
+        messages=[{"role": "user", "content": content}]).content[0].text
 
-import anthropic
-client = anthropic.Anthropic(api_key=os.environ['ANTHROPIC_API_KEY'])
-msg = client.messages.create(
-    model=model, max_tokens=4096,
-    messages=[{"role": "user", "content": content}])
-print(msg.content[0].text)
+print(review)
+should_fail, reason = check_verdict(review, fail_on_critical)
+if should_fail:
+    print("\n[review] FAIL:", reason, file=sys.stderr)
+    sys.exit(1)
 `
 
 // commandsForSonar builds the sonar-scanner shell command string.
