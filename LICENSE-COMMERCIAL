@@ -1,0 +1,66 @@
+RELAY CI — COMMERCIAL LICENSE AGREEMENT
+
+Copyright (c) 2026 Alex Punnen Carmel. All rights reserved.
+
+This Commercial License Agreement ("Agreement") is entered into between
+Alex Punnen Carmel ("Licensor") and the purchasing organization or individual
+("Licensee").
+
+1. GRANT OF LICENSE
+
+   Subject to payment of the applicable license fee and the terms of this
+   Agreement, Licensor grants Licensee a non-exclusive, non-transferable,
+   worldwide license to:
+
+   a) Use, copy, and modify Relay CI for internal and commercial purposes;
+   b) Deploy Relay CI as part of a hosted or managed service without the
+      obligation to release source code to end users;
+   c) Distribute Relay CI as part of a proprietary product or service;
+   d) White-label or OEM-embed Relay CI without open-source disclosure.
+
+2. RESTRICTIONS
+
+   Licensee may not:
+   a) Sublicense, sell, or transfer this license to a third party without
+      prior written consent from Licensor;
+   b) Remove or alter any proprietary notices or labels on Relay CI;
+   c) Use the Licensor's name, trademarks, or logos without prior written
+      permission.
+
+3. FEES
+
+   License fees are determined on a per-deployment or per-organization basis.
+   Contact Licensor for current pricing.
+
+4. SUPPORT AND WARRANTIES
+
+   Commercial licensees may negotiate support contracts, SLAs, and warranties
+   separately with Licensor. This base Agreement provides the software
+   "as-is" unless a separate support agreement is in place.
+
+5. TERMINATION
+
+   This Agreement terminates automatically if Licensee breaches any of its
+   terms. Upon termination, Licensee must cease all use and destroy all
+   copies of Relay CI in their possession.
+
+6. GOVERNING LAW
+
+   This Agreement shall be governed by and construed in accordance with
+   applicable law. Any disputes shall be resolved through good-faith
+   negotiation, followed by binding arbitration if necessary.
+
+7. ENTIRE AGREEMENT
+
+   This Agreement constitutes the entire agreement between the parties
+   regarding the subject matter herein and supersedes all prior negotiations,
+   representations, or agreements.
+
+---
+
+To obtain a commercial license, contact:
+
+  Alex Punnen Carmel
+  Email: alexcpn@gmail.com
+
+See LICENSING.md for a summary of available license options.
