@@ -44,6 +44,8 @@ stop_server() {
         kill "$pid" 2>/dev/null && echo "  stopped $name (pid $pid)" || true
         rm -f "$pf"
     else
+        # Also kill any stale process by binary name in case PID file is missing.
+        pkill -f "bin/ci-${name}" 2>/dev/null && echo "  killed stale $name process" || true
         echo "  $name not running"
     fi
 }

@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -136,9 +137,29 @@ func (s *workerRegistryServer) ReportTaskResult(ctx context.Context, req *pb.Rep
 		return nil, status.Errorf(codes.Internal, "handling task result: %v", err)
 	}
 
-	// If the build just finished, report final status to SCM.
+	// Report per-task status to SCM.
+	// Look up the human-readable task name from the build graph.
+	taskName := taskID
+	if build, ok := s.sched.GetBuild(buildID); ok {
+		if t, ok := build.Graph.GetTask(taskID); ok && t.Name != "" {
+			taskName = t.Name
+		}
+	}
+	// Fire SCM task status in a goroutine — never block the gRPC handler.
+	switch taskState {
+	case dag.TaskPassed:
+		go s.reportTaskStatus(context.Background(), buildID, taskName, scm.StatusSuccess, "Passed")
+	case dag.TaskFailed:
+		go s.reportTaskStatus(context.Background(), buildID, taskName, scm.StatusFailure, "Failed")
+	case dag.TaskTimedOut:
+		go s.reportTaskStatus(context.Background(), buildID, taskName, scm.StatusFailure, "Timed out")
+	case dag.TaskCancelled:
+		go s.reportTaskStatus(context.Background(), buildID, taskName, scm.StatusError, "Cancelled")
+	}
+
+	// If the build just finished, report overall status and post PR comment.
 	if completion.BuildID != "" {
-		s.reportBuildCompletion(ctx, completion)
+		go s.reportBuildCompletion(context.Background(), completion)
 	}
 
 	s.logger.Info("task result received",
@@ -150,6 +171,38 @@ func (s *workerRegistryServer) ReportTaskResult(ctx context.Context, req *pb.Rep
 	)
 
 	return &pb.ReportTaskResultResponse{}, nil
+}
+
+// reportTaskStatus posts a single task's status to the SCM provider.
+// context: "ci/<taskName>", e.g. "ci/lint" or "ci/code review".
+func (s *workerRegistryServer) reportTaskStatus(ctx context.Context, buildID, taskName string, state scm.StatusState, description string) {
+	if s.sched == nil {
+		return
+	}
+	build, ok := s.sched.GetBuild(buildID)
+	if !ok || build.SCMToken == "" || build.CommitSHA == "" || build.RepoFullName == "" {
+		return
+	}
+	client, ok := s.scmRouter.GetClient(build.SCMProvider)
+	if !ok {
+		return
+	}
+	var targetURL string
+	if s.publicURL != "" {
+		targetURL = fmt.Sprintf("%s/logs?build_id=%s", s.publicURL, buildID)
+	}
+	if err := client.ReportStatus(ctx, build.SCMToken, scm.StatusReport{
+		Provider:     build.SCMProvider,
+		RepoFullName: build.RepoFullName,
+		CommitSHA:    build.CommitSHA,
+		State:        state,
+		Context:      "ci/" + taskName,
+		Description:  description,
+		TargetURL:    targetURL,
+	}); err != nil {
+		s.logger.Warn("failed to report task status to SCM",
+			"build_id", buildID, "task", taskName, "err", err)
+	}
 }
 
 func (s *workerRegistryServer) reportBuildCompletion(ctx context.Context, c scheduler.BuildCompletion) {
@@ -222,21 +275,28 @@ func (s *workerRegistryServer) buildPRComment(c scheduler.BuildCompletion, logsU
 	sb.WriteString("\n\n")
 
 	// Task summary table.
-	sb.WriteString("| Task | Result | Details |\n")
-	sb.WriteString("|---|---|---|\n")
+	sb.WriteString("| Task | Result | Duration | Details |\n")
+	sb.WriteString("|---|---|---|---|\n")
 	for _, task := range b.Graph.Tasks() {
 		icon := taskStateIcon(task.State)
+
+		dur := ""
+		if !task.StartedAt.IsZero() && !task.FinishedAt.IsZero() {
+			dur = task.FinishedAt.Sub(task.StartedAt).Round(time.Second).String()
+		}
+
 		details := ""
-		// For failed tasks include a snippet from the logs.
-		if task.State == dag.TaskFailed {
-			details = s.taskLogSnippet(task.ID, 5)
+		switch {
+		case task.ID == "review-pr" && task.State != dag.TaskSkipped:
+			// Show full review text in a collapsible block.
+			details = s.codeReviewFull(task.ID)
+		case task.State == dag.TaskFailed || task.State == dag.TaskTimedOut:
+			// Show last log lines for any failed task.
+			details = s.taskLogSnippet(task.ID, 10)
 		}
-		// For code review task include the verdict line.
-		if task.ID == "review-pr" && task.State != dag.TaskSkipped {
-			details = s.codeReviewVerdict(task.ID)
-		}
-		sb.WriteString(fmt.Sprintf("| %s | %s %s | %s |\n",
-			task.Name, icon, task.State, details))
+
+		sb.WriteString(fmt.Sprintf("| %s | %s %s | %s | %s |\n",
+			task.Name, icon, task.State, dur, details))
 	}
 
 	sb.WriteString("\n---\n")
@@ -287,20 +347,63 @@ func (s *workerRegistryServer) taskLogSnippet(taskID string, n int) string {
 	return sb.String()
 }
 
-// codeReviewVerdict scans the code review task logs for the verdict line
-// and returns it for display in the PR comment.
-func (s *workerRegistryServer) codeReviewVerdict(taskID string) string {
+// codeReviewFull returns the full code review output as a collapsible
+// Markdown block. It strips system log lines (prefixed with [SYS]) and
+// extracts the LLM-generated review text starting from the first "##" heading.
+func (s *workerRegistryServer) codeReviewFull(taskID string) string {
 	if s.logs == nil {
 		return ""
 	}
 	total := s.logs.LineCount(taskID)
 	lines, _ := s.logs.Get(taskID, 0, total)
+	if len(lines) == 0 {
+		return ""
+	}
+
+	// Find the verdict line for the summary header.
+	verdict := ""
 	for i := len(lines) - 1; i >= 0; i-- {
 		if strings.Contains(lines[i].Content, "Ready to merge?") {
-			return "`" + strings.TrimSpace(lines[i].Content) + "`"
+			verdict = strings.TrimSpace(lines[i].Content)
+			break
 		}
 	}
-	return ""
+
+	// Collect only the review text lines (skip [SYS]/[ERR] infrastructure lines).
+	var reviewLines []string
+	inReview := false
+	for _, l := range lines {
+		c := l.Content
+		// Start capturing from the first markdown heading the LLM outputs.
+		if !inReview && strings.HasPrefix(c, "##") {
+			inReview = true
+		}
+		if inReview && !strings.HasPrefix(c, "[SYS]") && !strings.HasPrefix(c, "[ERR]") {
+			reviewLines = append(reviewLines, c)
+		}
+	}
+
+	if len(reviewLines) == 0 {
+		// Fallback: just show the verdict.
+		if verdict != "" {
+			return "`" + verdict + "`"
+		}
+		return ""
+	}
+
+	summary := "View review"
+	if verdict != "" {
+		summary = verdict
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("<details><summary>%s</summary>\n\n", summary))
+	for _, line := range reviewLines {
+		sb.WriteString(line)
+		sb.WriteString("\n")
+	}
+	sb.WriteString("\n</details>")
+	return sb.String()
 }
 
 func protoToTaskState(s pb.TaskState) dag.TaskState {
