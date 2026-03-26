@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -16,16 +17,18 @@ import (
 	"github.com/ci-system/ci/pkg/dag"
 	"github.com/ci-system/ci/pkg/pipeline"
 	"github.com/ci-system/ci/pkg/scheduler"
+	"github.com/ci-system/ci/pkg/scm"
 )
 
 // schedulerServer implements the SchedulerService gRPC interface.
 type schedulerServer struct {
 	pb.UnimplementedSchedulerServiceServer
-	sched *scheduler.Scheduler
+	sched     *scheduler.Scheduler
+	scmRouter *scm.Router
 }
 
-func newSchedulerServer(sched *scheduler.Scheduler) *schedulerServer {
-	return &schedulerServer{sched: sched}
+func newSchedulerServer(sched *scheduler.Scheduler, scmRouter *scm.Router) *schedulerServer {
+	return &schedulerServer{sched: sched, scmRouter: scmRouter}
 }
 
 func (s *schedulerServer) SubmitBuild(ctx context.Context, req *pb.SubmitBuildRequest) (*pb.SubmitBuildResponse, error) {
@@ -99,11 +102,17 @@ func fetchAndBuildGraph(ctx context.Context, src *pb.GitSource) (*dag.Graph, err
 		return nil, fmt.Errorf("cloning repo: %w\n%s", err, out)
 	}
 
-	// Check out a specific commit if requested.
+	// Check out a specific commit if requested and it differs from HEAD.
+	// With --depth=1 the clone is already at the branch tip; skip the checkout
+	// if the SHA matches to avoid "reference is not a tree" on shallow clones.
 	if src.CommitSha != "" && src.CommitSha != "HEAD" {
-		cmd := exec.CommandContext(ctx, "git", "-C", tmpDir, "checkout", src.CommitSha)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return nil, fmt.Errorf("checking out commit %s: %w\n%s", src.CommitSha, err, out)
+		headOut, _ := exec.CommandContext(ctx, "git", "-C", tmpDir, "rev-parse", "HEAD").Output()
+		head := strings.TrimSpace(string(headOut))
+		if head != src.CommitSha && !strings.HasPrefix(head, src.CommitSha) {
+			cmd := exec.CommandContext(ctx, "git", "-C", tmpDir, "checkout", src.CommitSha)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				return nil, fmt.Errorf("checking out commit %s: %w\n%s", src.CommitSha, err, out)
+			}
 		}
 	}
 
@@ -133,8 +142,28 @@ func (s *schedulerServer) CancelBuild(ctx context.Context, req *pb.CancelBuildRe
 		return nil, status.Error(codes.InvalidArgument, "build_id is required")
 	}
 
+	// Fetch build metadata before cancelling so we can report status.
+	build, hasBuild := s.sched.GetBuild(req.BuildId.Id)
+
 	if err := s.sched.CancelBuild(req.BuildId.Id); err != nil {
 		return nil, status.Errorf(codes.NotFound, "%v", err)
+	}
+
+	// Report cancellation to SCM if the build had a token.
+	if hasBuild && build.SCMToken != "" && build.CommitSHA != "" && build.RepoFullName != "" {
+		if client, ok := s.scmRouter.GetClient(build.SCMProvider); ok {
+			if err := client.ReportStatus(ctx, build.SCMToken, scm.StatusReport{
+				Provider:     build.SCMProvider,
+				RepoFullName: build.RepoFullName,
+				CommitSHA:    build.CommitSHA,
+				State:        scm.StatusError,
+				Context:      "ci/build",
+				Description:  "Build cancelled",
+			}); err != nil {
+				// Non-fatal — log and continue.
+				_ = err
+			}
+		}
 	}
 
 	return &pb.CancelBuildResponse{}, nil
