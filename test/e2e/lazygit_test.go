@@ -18,6 +18,7 @@ import (
 	"google.golang.org/grpc"
 
 	pb "github.com/ci-system/ci/gen/ci/v1"
+	"github.com/ci-system/ci/pkg/auth"
 	"github.com/ci-system/ci/pkg/tlsutil"
 )
 
@@ -45,7 +46,11 @@ func TestLazygitBuild(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TLS setup: %v", err)
 	}
-	conn, err := grpc.NewClient(masterAddr, dialOpt)
+	dialOpts := []grpc.DialOption{dialOpt}
+	if tokenOpt := auth.TokenDialOption(auth.TokenFromEnv()); tokenOpt != nil {
+		dialOpts = append(dialOpts, tokenOpt)
+	}
+	conn, err := grpc.NewClient(masterAddr, dialOpts...)
 	if err != nil {
 		t.Fatalf("connecting to master at %s: %v", masterAddr, err)
 	}

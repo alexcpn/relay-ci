@@ -12,6 +12,7 @@ import (
 	"google.golang.org/grpc"
 
 	pb "github.com/ci-system/ci/gen/ci/v1"
+	"github.com/ci-system/ci/pkg/auth"
 	"github.com/ci-system/ci/pkg/tlsutil"
 )
 
@@ -28,7 +29,11 @@ func main() {
 		fmt.Fprintf(os.Stderr, "error: TLS setup failed: %v\n", err)
 		os.Exit(1)
 	}
-	conn, err := grpc.NewClient(masterAddr, dialOpt)
+	dialOpts := []grpc.DialOption{dialOpt}
+	if tokenOpt := auth.TokenDialOption(auth.TokenFromEnv()); tokenOpt != nil {
+		dialOpts = append(dialOpts, tokenOpt)
+	}
+	conn, err := grpc.NewClient(masterAddr, dialOpts...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: failed to connect to master at %s: %v\n", masterAddr, err)
 		os.Exit(1)
