@@ -18,6 +18,7 @@ import (
 	"github.com/ci-system/ci/pkg/scheduler"
 	"github.com/ci-system/ci/pkg/scm"
 	"github.com/ci-system/ci/pkg/secrets"
+	"github.com/ci-system/ci/pkg/tlsutil"
 	"github.com/ci-system/ci/pkg/worker"
 )
 
@@ -32,6 +33,13 @@ func main() {
 	webhookSecret := os.Getenv("WEBHOOK_SECRET")
 	publicURL := os.Getenv("PUBLIC_URL") // e.g. "http://ci.example.com:8080" for Details links
 
+	// --- TLS ---
+
+	tlsCfg := tlsutil.ConfigFromEnv()
+	if tlsCfg.Enabled {
+		logger.Info("TLS enabled", "cert", tlsCfg.CertFile, "ca", tlsCfg.CAFile)
+	}
+
 	// --- Initialize components ---
 
 	// Secrets store: load from .secrets.env (or SECRETS_FILE) on startup.
@@ -42,7 +50,7 @@ func main() {
 	logs := logstore.New()
 
 	// Dispatcher sends tasks to workers via gRPC.
-	disp := newDispatcher(registry, logger)
+	disp := newDispatcher(registry, tlsCfg, logger)
 	defer disp.close()
 
 	// SCM router for webhooks.
@@ -65,7 +73,14 @@ func main() {
 
 	// --- gRPC server ---
 
-	grpcServer := grpc.NewServer()
+	var grpcOpts []grpc.ServerOption
+	if opt, err := tlsCfg.GRPCServerOption(); err != nil {
+		logger.Error("TLS setup failed", "err", err)
+		os.Exit(1)
+	} else if opt != nil {
+		grpcOpts = append(grpcOpts, opt)
+	}
+	grpcServer := grpc.NewServer(grpcOpts...)
 	pb.RegisterSchedulerServiceServer(grpcServer, newSchedulerServer(sched, router))
 	pb.RegisterWorkerRegistryServiceServer(grpcServer, workerSrv)
 	pb.RegisterLogServiceServer(grpcServer, newLogServer(logs))
@@ -86,6 +101,12 @@ func main() {
 	httpServer := &http.Server{
 		Addr:    httpAddr,
 		Handler: mux,
+	}
+	if httpTLS, err := tlsCfg.ServerTLSConfig(); err != nil {
+		logger.Error("HTTP TLS setup failed", "err", err)
+		os.Exit(1)
+	} else if httpTLS != nil {
+		httpServer.TLSConfig = httpTLS
 	}
 
 	// --- Scheduling loop ---
@@ -134,8 +155,14 @@ func main() {
 	}()
 
 	go func() {
-		logger.Info("HTTP server starting", "addr", httpAddr)
-		if err := httpServer.ListenAndServe(); err != http.ErrServerClosed {
+		logger.Info("HTTP server starting", "addr", httpAddr, "tls", httpServer.TLSConfig != nil)
+		var err error
+		if httpServer.TLSConfig != nil {
+			err = httpServer.ListenAndServeTLS("", "") // certs already in TLSConfig
+		} else {
+			err = httpServer.ListenAndServe()
+		}
+		if err != http.ErrServerClosed {
 			logger.Error("HTTP server error", "err", err)
 		}
 	}()

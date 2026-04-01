@@ -8,10 +8,10 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 
 	pb "github.com/ci-system/ci/gen/ci/v1"
 	"github.com/ci-system/ci/pkg/scheduler"
+	"github.com/ci-system/ci/pkg/tlsutil"
 	"github.com/ci-system/ci/pkg/worker"
 )
 
@@ -21,14 +21,16 @@ type dispatcher struct {
 	conns    map[string]*grpc.ClientConn       // workerID -> connection
 	clients  map[string]pb.WorkerServiceClient  // workerID -> client
 	registry *worker.Registry
+	tlsCfg   tlsutil.Config
 	logger   *slog.Logger
 }
 
-func newDispatcher(registry *worker.Registry, logger *slog.Logger) *dispatcher {
+func newDispatcher(registry *worker.Registry, tlsCfg tlsutil.Config, logger *slog.Logger) *dispatcher {
 	return &dispatcher{
 		conns:    make(map[string]*grpc.ClientConn),
 		clients:  make(map[string]pb.WorkerServiceClient),
 		registry: registry,
+		tlsCfg:   tlsCfg,
 		logger:   logger,
 	}
 }
@@ -110,7 +112,11 @@ func (d *dispatcher) getClient(workerID string) (pb.WorkerServiceClient, error) 
 		addr = "localhost" + addr
 	}
 
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	dialOpt, err := d.tlsCfg.GRPCDialOption()
+	if err != nil {
+		return nil, fmt.Errorf("TLS config for worker %s: %w", workerID, err)
+	}
+	conn, err := grpc.NewClient(addr, dialOpt)
 	if err != nil {
 		return nil, fmt.Errorf("dialing worker %s at %s: %w", workerID, addr, err)
 	}

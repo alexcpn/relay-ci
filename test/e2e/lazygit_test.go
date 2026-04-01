@@ -16,9 +16,9 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 
 	pb "github.com/ci-system/ci/gen/ci/v1"
+	"github.com/ci-system/ci/pkg/tlsutil"
 )
 
 const (
@@ -40,7 +40,12 @@ func TestLazygitBuild(t *testing.T) {
 
 	masterAddr := envOrDefault("CI_MASTER", "localhost:9090")
 
-	conn, err := grpc.NewClient(masterAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	tlsCfg := tlsutil.ConfigFromEnv()
+	dialOpt, err := tlsCfg.GRPCDialOption()
+	if err != nil {
+		t.Fatalf("TLS setup: %v", err)
+	}
+	conn, err := grpc.NewClient(masterAddr, dialOpt)
 	if err != nil {
 		t.Fatalf("connecting to master at %s: %v", masterAddr, err)
 	}

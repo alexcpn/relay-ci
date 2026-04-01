@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 
 	pb "github.com/ci-system/ci/gen/ci/v1"
+	"github.com/ci-system/ci/pkg/tlsutil"
 )
 
 // MCP Server for CI System
@@ -30,7 +30,13 @@ func main() {
 	masterAddr := envOrDefault("CI_MASTER", "localhost:9090")
 	httpAddr := os.Getenv("MCP_HTTP_ADDR") // e.g. ":8081" or "0.0.0.0:8081"
 
-	conn, err := grpc.NewClient(masterAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	tlsCfg := tlsutil.ConfigFromEnv()
+	dialOpt, err := tlsCfg.GRPCDialOption()
+	if err != nil {
+		logger.Error("TLS setup failed", "err", err)
+		os.Exit(1)
+	}
+	conn, err := grpc.NewClient(masterAddr, dialOpt)
 	if err != nil {
 		logger.Error("failed to connect to master", "addr", masterAddr, "err", err)
 		os.Exit(1)

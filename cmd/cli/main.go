@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 
 	pb "github.com/ci-system/ci/gen/ci/v1"
+	"github.com/ci-system/ci/pkg/tlsutil"
 )
 
 func main() {
@@ -22,7 +22,13 @@ func main() {
 	}
 
 	masterAddr := envOrDefault("CI_MASTER", "localhost:9090")
-	conn, err := grpc.NewClient(masterAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	tlsCfg := tlsutil.ConfigFromEnv()
+	dialOpt, err := tlsCfg.GRPCDialOption()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: TLS setup failed: %v\n", err)
+		os.Exit(1)
+	}
+	conn, err := grpc.NewClient(masterAddr, dialOpt)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: failed to connect to master at %s: %v\n", masterAddr, err)
 		os.Exit(1)
