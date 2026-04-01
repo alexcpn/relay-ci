@@ -73,6 +73,7 @@ type Task struct {
 	ID             string
 	Name           string
 	State          TaskState
+	Condition      string // "on_success" (default), "on_failure", "always"
 	ContainerImage string
 	Commands       []string
 	Env            map[string]string
@@ -86,6 +87,12 @@ type Task struct {
 	ErrorMessage   string
 	StartedAt      time.Time
 	FinishedAt     time.Time
+}
+
+// ShouldRunAfterFailure returns true if this task should run even when
+// an upstream dependency has failed (condition is "always" or "on_failure").
+func (t *Task) ShouldRunAfterFailure() bool {
+	return t.Condition == "always" || t.Condition == "on_failure"
 }
 
 // CacheMount defines a cache volume to mount into the task container.

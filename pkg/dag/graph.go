@@ -168,20 +168,42 @@ func (g *Graph) Complete(taskID string, state TaskState, exitCode int, errMsg st
 	task.ExitCode = exitCode
 	task.ErrorMessage = errMsg
 
-	// If the task failed, skip all downstream tasks.
+	// If the task failed, skip downstream tasks (respecting conditions).
 	if state == TaskFailed || state == TaskTimedOut {
 		g.skipDownstream(taskID)
 	}
 
 	// Find newly ready tasks.
 	var newlyReady []*Task
-	if state == TaskPassed {
-		for childID := range g.edges[taskID] {
-			child := g.tasks[childID]
-			if child.State == TaskPending && g.allDepsComplete(childID) {
+	for childID := range g.edges[taskID] {
+		child := g.tasks[childID]
+		if child.State != TaskPending {
+			continue
+		}
+		if !g.allDepsTerminal(childID) {
+			continue
+		}
+		// Decide if this child should run based on its condition and dep outcomes.
+		anyFailed := g.anyDepFailed(childID)
+		allPassed := g.allDepsPassed(childID)
+
+		switch child.Condition {
+		case "on_failure":
+			if anyFailed {
+				child.State = TaskReady
+				newlyReady = append(newlyReady, child)
+			} else {
+				child.State = TaskSkipped
+			}
+		case "always":
+			child.State = TaskReady
+			newlyReady = append(newlyReady, child)
+		default: // "" or "on_success"
+			if allPassed {
 				child.State = TaskReady
 				newlyReady = append(newlyReady, child)
 			}
+			// If not all passed, skipDownstream already handled it.
 		}
 	}
 
@@ -300,14 +322,55 @@ func (g *Graph) allDepsComplete(taskID string) bool {
 	return true
 }
 
-// skipDownstream recursively marks all downstream tasks as skipped.
+// allDepsTerminal returns true if all parents of taskID are in a terminal state.
+// Caller must hold at least a read lock.
+func (g *Graph) allDepsTerminal(taskID string) bool {
+	for parentID := range g.deps[taskID] {
+		if !g.tasks[parentID].State.IsTerminal() {
+			return false
+		}
+	}
+	return true
+}
+
+// anyDepFailed returns true if any parent of taskID failed or timed out.
+// Caller must hold at least a read lock.
+func (g *Graph) anyDepFailed(taskID string) bool {
+	for parentID := range g.deps[taskID] {
+		s := g.tasks[parentID].State
+		if s == TaskFailed || s == TaskTimedOut {
+			return true
+		}
+	}
+	return false
+}
+
+// allDepsPassed returns true if all parents of taskID passed.
+// Caller must hold at least a read lock.
+func (g *Graph) allDepsPassed(taskID string) bool {
+	for parentID := range g.deps[taskID] {
+		if g.tasks[parentID].State != TaskPassed {
+			return false
+		}
+	}
+	return true
+}
+
+// skipDownstream recursively marks downstream tasks as skipped,
+// except those with condition "always" or "on_failure".
 // Caller must hold the write lock.
 func (g *Graph) skipDownstream(taskID string) {
 	for childID := range g.edges[taskID] {
 		child := g.tasks[childID]
-		if !child.State.IsTerminal() {
-			child.State = TaskSkipped
-			g.skipDownstream(childID) // recurse
+		if child.State.IsTerminal() {
+			continue
 		}
+		if child.ShouldRunAfterFailure() {
+			// Don't skip — this task wants to run after failure.
+			// It will be made ready in Complete() once all deps are terminal.
+			continue
+		}
+		child.State = TaskSkipped
+		g.skipDownstream(childID) // recurse
 	}
 }

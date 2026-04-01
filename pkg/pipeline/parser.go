@@ -136,6 +136,7 @@ func configToTask(tc TaskConfig, defaults Defaults) *dag.Task {
 	return &dag.Task{
 		ID:             tc.ID,
 		Name:           name,
+		Condition:      tc.Condition,
 		ContainerImage: image,
 		Commands:       tc.Commands,
 		Env:            env,
