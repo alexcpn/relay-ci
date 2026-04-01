@@ -110,6 +110,35 @@ func (g *GitHub) ReportStatus(ctx context.Context, token string, report StatusRe
 	return nil
 }
 
+// PostPRComment posts a markdown comment on a GitHub pull request.
+func (g *GitHub) PostPRComment(ctx context.Context, token string, comment PRComment) error {
+	body, err := json.Marshal(map[string]string{"body": comment.Body})
+	if err != nil {
+		return err
+	}
+
+	url := fmt.Sprintf("%s/repos/%s/issues/%s/comments", g.apiBase, comment.RepoFullName, comment.PRNumber)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := g.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("posting PR comment: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("github PR comment API returned %d: %s", resp.StatusCode, string(respBody))
+	}
+	return nil
+}
+
 // --- GitHub payload parsing ---
 
 type ghPushPayload struct {

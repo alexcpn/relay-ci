@@ -30,6 +30,7 @@ func main() {
 	grpcAddr := envOrDefault("GRPC_ADDR", ":9090")
 	httpAddr := envOrDefault("HTTP_ADDR", ":8080")
 	webhookSecret := os.Getenv("WEBHOOK_SECRET")
+	publicURL := os.Getenv("PUBLIC_URL") // e.g. "http://ci.example.com:8080" for Details links
 
 	// --- Initialize components ---
 
@@ -44,28 +45,36 @@ func main() {
 	disp := newDispatcher(registry, logger)
 	defer disp.close()
 
-	// Scheduler calls dispatcher when assigning tasks.
-	sched := scheduler.New(registry, func(a scheduler.TaskAssignment) error {
-		return disp.dispatch(a)
-	}, logger)
-
 	// SCM router for webhooks.
 	gh := scm.NewGitHub(nil, "")
 	gl := scm.NewGitLab(nil, "")
 	router := scm.NewRouter(gh, gl)
 
+	// Create the worker registry server first so the scheduler dispatch
+	// callback can call reportTaskStatus on it (for per-task pending statuses).
+	workerSrv := newWorkerRegistryServer(registry, nil, router, logs, logger, publicURL)
+
+	// Scheduler calls dispatcher when assigning tasks and posts a per-task
+	// "pending" status to the SCM provider.
+	// The SCM call is fire-and-forget in a goroutine so it never blocks dispatch.
+	sched := scheduler.New(registry, func(a scheduler.TaskAssignment) error {
+		go workerSrv.reportTaskStatus(context.Background(), a.BuildID, a.Task.Name, scm.StatusPending, "Running")
+		return disp.dispatch(a)
+	}, logger)
+	workerSrv.sched = sched // wire back after creation
+
 	// --- gRPC server ---
 
 	grpcServer := grpc.NewServer()
-	pb.RegisterSchedulerServiceServer(grpcServer, newSchedulerServer(sched))
-	pb.RegisterWorkerRegistryServiceServer(grpcServer, newWorkerRegistryServer(registry, sched, logger))
+	pb.RegisterSchedulerServiceServer(grpcServer, newSchedulerServer(sched, router))
+	pb.RegisterWorkerRegistryServiceServer(grpcServer, workerSrv)
 	pb.RegisterLogServiceServer(grpcServer, newLogServer(logs))
 	pb.RegisterSecretsServiceServer(grpcServer, newSecretsServer(secretStore))
 
 	// --- HTTP server (webhooks + log viewer) ---
 
 	mux := http.NewServeMux()
-	mux.Handle("/webhooks", newWebhookHandler(router, sched, logger, webhookSecret))
+	mux.Handle("/webhooks", newWebhookHandler(router, sched, logger, webhookSecret, secretStore, publicURL))
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"status":"ok"}`))

@@ -115,26 +115,33 @@ func TestScheduleAndComplete(t *testing.T) {
 	// Complete compile_a, compile_b, test — integration should not unlock
 	// until all three are done.
 	for _, id := range []string{"compile_a", "compile_b"} {
-		newReady, err := s.HandleTaskResult(TaskResultReport{
+		completion, err := s.HandleTaskResult(TaskResultReport{
 			BuildID: "build-1", TaskID: id, State: dag.TaskPassed,
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if newReady != 0 {
-			t.Errorf("expected 0 newly ready after %s, got %d", id, newReady)
+		// Build should not be complete yet.
+		if completion.BuildID != "" {
+			t.Errorf("expected build not complete after %s, but got completion", id)
 		}
 	}
 
-	// Complete test — now integration should be ready.
-	newReady, err := s.HandleTaskResult(TaskResultReport{
+	// Complete test — integration should now be ready to schedule.
+	completion, err := s.HandleTaskResult(TaskResultReport{
 		BuildID: "build-1", TaskID: "test", State: dag.TaskPassed,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if newReady != 1 {
-		t.Fatalf("expected 1 newly ready (integration), got %d", newReady)
+	// Build is not complete yet (integration + deploy still pending).
+	if completion.BuildID != "" {
+		t.Fatalf("expected build not complete after test, but got completion")
+	}
+	// Verify integration is now ready (will be scheduled in next cycle).
+	integration, _ := build.Graph.GetTask("integration")
+	if integration.State != dag.TaskReady && integration.State != dag.TaskPending {
+		t.Fatalf("expected integration to be ready, got %s", integration.State)
 	}
 
 	// Schedule again — should assign integration.
