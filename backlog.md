@@ -37,7 +37,7 @@
 ## Priority 5: Pipeline Features
 
 - [ ] **Matrix builds** — e.g., `matrix: {go: [1.21, 1.22], os: [linux, macos]}`
-- [ ] **Conditional step enforcement** — `condition: always | on_success | on_failure` is parsed but not enforced at runtime
+- [x] **Conditional step enforcement** — `condition: always | on_success | on_failure` enforced at runtime (PR #6)
 - [ ] **Artifact upload/download** — collect artifacts from containers, store, and make downloadable
 - [ ] **Template expansion** — `{{ checksum "go.sum" }}` in cache keys is parsed but not expanded
 - [ ] **Manual approval gates** — pause pipeline and wait for human/agent approval before continuing

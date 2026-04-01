@@ -297,6 +297,154 @@ func TestDependenciesAndDependents(t *testing.T) {
 	}
 }
 
+// --- Conditional step tests ---
+
+// buildConditionalGraph creates:
+//
+//	build ──► test ──► deploy (on_success, default)
+//	              ├──► notify (always)
+//	              └──► cleanup (on_failure)
+func buildConditionalGraph(t *testing.T) *Graph {
+	t.Helper()
+	g := New()
+	for _, task := range []*Task{
+		{ID: "build", Name: "build"},
+		{ID: "test", Name: "test"},
+		{ID: "deploy", Name: "deploy"},                        // default on_success
+		{ID: "notify", Name: "notify", Condition: "always"},   // runs always
+		{ID: "cleanup", Name: "cleanup", Condition: "on_failure"}, // runs on failure
+	} {
+		if err := g.AddTask(task); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, e := range [][2]string{
+		{"build", "test"},
+		{"test", "deploy"},
+		{"test", "notify"},
+		{"test", "cleanup"},
+	} {
+		if err := g.AddEdge(e[0], e[1]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := g.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	return g
+}
+
+func completeTask(t *testing.T, g *Graph, id string, state TaskState) []*Task {
+	t.Helper()
+	task, _ := g.GetTask(id)
+	task.TransitionTo(TaskScheduled)
+	task.TransitionTo(TaskRunning)
+	ready, err := g.Complete(id, state, 0, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ready
+}
+
+func TestCondition_OnSuccess_AllPass(t *testing.T) {
+	g := buildConditionalGraph(t)
+	g.MarkReady()
+
+	completeTask(t, g, "build", TaskPassed)
+	ready := completeTask(t, g, "test", TaskPassed)
+
+	// When test passes: deploy (on_success) and notify (always) should be ready.
+	// cleanup (on_failure) should be skipped.
+	names := taskNames(ready)
+	readySet := make(map[string]bool)
+	for _, n := range names {
+		readySet[n] = true
+	}
+
+	if !readySet["deploy"] {
+		t.Error("deploy should be ready when test passes")
+	}
+	if !readySet["notify"] {
+		t.Error("notify (always) should be ready when test passes")
+	}
+
+	cleanup, _ := g.GetTask("cleanup")
+	if cleanup.State != TaskSkipped {
+		t.Errorf("cleanup (on_failure) should be skipped when test passes, got %s", cleanup.State)
+	}
+}
+
+func TestCondition_OnFailure_TestFails(t *testing.T) {
+	g := buildConditionalGraph(t)
+	g.MarkReady()
+
+	completeTask(t, g, "build", TaskPassed)
+	ready := completeTask(t, g, "test", TaskFailed)
+
+	names := taskNames(ready)
+	readySet := make(map[string]bool)
+	for _, n := range names {
+		readySet[n] = true
+	}
+
+	// When test fails: notify (always) and cleanup (on_failure) should be ready.
+	// deploy (on_success) should NOT be ready (skipped by skipDownstream).
+	if !readySet["notify"] {
+		t.Error("notify (always) should be ready when test fails")
+	}
+	if !readySet["cleanup"] {
+		t.Error("cleanup (on_failure) should be ready when test fails")
+	}
+
+	deploy, _ := g.GetTask("deploy")
+	if deploy.State != TaskSkipped {
+		t.Errorf("deploy (on_success) should be skipped when test fails, got %s", deploy.State)
+	}
+}
+
+func TestCondition_Always_RunsRegardless(t *testing.T) {
+	g := New()
+	for _, task := range []*Task{
+		{ID: "a", Name: "a"},
+		{ID: "b", Name: "b", Condition: "always"},
+	} {
+		g.AddTask(task)
+	}
+	g.AddEdge("a", "b")
+	g.Validate()
+	g.MarkReady()
+
+	// Fail a — b should still run because condition is "always".
+	ready := completeTask(t, g, "a", TaskFailed)
+	if len(ready) != 1 || ready[0].ID != "b" {
+		t.Fatalf("expected b (always) to be ready after a fails, got: %v", taskNames(ready))
+	}
+}
+
+func TestCondition_OnFailure_SkippedWhenAllPass(t *testing.T) {
+	g := New()
+	for _, task := range []*Task{
+		{ID: "a", Name: "a"},
+		{ID: "b", Name: "b", Condition: "on_failure"},
+	} {
+		g.AddTask(task)
+	}
+	g.AddEdge("a", "b")
+	g.Validate()
+	g.MarkReady()
+
+	// Pass a — b (on_failure) should be skipped since nothing failed.
+	ready := completeTask(t, g, "a", TaskPassed)
+	if len(ready) != 0 {
+		t.Fatalf("expected no ready tasks (on_failure should be skipped), got: %v", taskNames(ready))
+	}
+
+	b, _ := g.GetTask("b")
+	if b.State != TaskSkipped {
+		t.Errorf("on_failure task should be skipped when deps pass, got %s", b.State)
+	}
+}
+
 func taskNames(tasks []*Task) []string {
 	names := make([]string, len(tasks))
 	for i, t := range tasks {
