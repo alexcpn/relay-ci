@@ -51,7 +51,20 @@ func main() {
 	loadSecretsFile(secretStore, logger)
 
 	registry := worker.NewRegistry(30 * time.Second)
-	logs := logstore.New()
+
+	// Log store: use file-backed storage if LOG_DIR is set.
+	var logs *logstore.Store
+	if logDir := os.Getenv("LOG_DIR"); logDir != "" {
+		var err error
+		logs, err = logstore.NewWithFile(logDir)
+		if err != nil {
+			logger.Error("failed to create file-backed log store", "dir", logDir, "err", err)
+			os.Exit(1)
+		}
+		logger.Info("log store using file backend", "dir", logDir)
+	} else {
+		logs = logstore.New()
+	}
 
 	// Dispatcher sends tasks to workers via gRPC.
 	disp := newDispatcher(registry, tlsCfg, logger)
