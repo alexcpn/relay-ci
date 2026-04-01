@@ -336,6 +336,17 @@ func sanitiseVolumeName(key string) string {
 	return b.String()
 }
 
+// cleanupBuildVolume removes the workspace volume for a completed build.
+func (e *executor) cleanupBuildVolume(ctx context.Context, buildID string) (string, error) {
+	volName := "ci-workspace-" + buildID
+	cmd := exec.CommandContext(ctx, "docker", "volume", "rm", "-f", volName)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("docker volume rm %s: %w: %s", volName, err, strings.TrimSpace(string(out)))
+	}
+	return fmt.Sprintf("removed volume %s", volName), nil
+}
+
 func isDockerNotAvailable(err error) bool {
 	errStr := err.Error()
 	return strings.Contains(errStr, "executable file not found") ||

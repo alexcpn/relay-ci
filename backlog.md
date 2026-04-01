@@ -15,7 +15,7 @@
 - [ ] **PostgreSQL for build history** — all builds lost on master restart (in-memory only)
 - [x] **Durable log storage (disk)** — `FileBackend` in `pkg/logstore`, JSONL files, auto-reload (PR #5)
 - [ ] **Artifact storage (MinIO / S3)** — `artifacts` config is parsed but never collected or uploaded
-- [ ] **Workspace volume cleanup** — Docker volumes (`ci-workspace-{buildID}`) are never cleaned up after build completion
+- [x] **Workspace volume cleanup** — master calls `CleanupBuild` RPC on workers after build completion (PR #7)
 - [ ] **Cache volume TTL / eviction** — cache volumes grow unbounded; need expiration policy
 
 ## Priority 3: Observability

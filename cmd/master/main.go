@@ -77,7 +77,7 @@ func main() {
 
 	// Create the worker registry server first so the scheduler dispatch
 	// callback can call reportTaskStatus on it (for per-task pending statuses).
-	workerSrv := newWorkerRegistryServer(registry, nil, router, logs, logger, publicURL)
+	workerSrv := newWorkerRegistryServer(registry, nil, router, logs, disp, logger, publicURL)
 
 	// Scheduler calls dispatcher when assigning tasks and posts a per-task
 	// "pending" status to the SCM provider.
