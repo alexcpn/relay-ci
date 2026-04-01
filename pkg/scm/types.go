@@ -43,6 +43,19 @@ const (
 	EventComment
 )
 
+func (e EventType) String() string {
+	switch e {
+	case EventPush:
+		return "push"
+	case EventPullRequest:
+		return "pull_request"
+	case EventComment:
+		return "comment"
+	default:
+		return "unknown"
+	}
+}
+
 // PushEvent is sent when commits are pushed to a branch.
 type PushEvent struct {
 	RepoURL      string
