@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc"
 
 	pb "github.com/ci-system/ci/gen/ci/v1"
+	"github.com/ci-system/ci/pkg/auth"
 	"github.com/ci-system/ci/pkg/logstore"
 	"github.com/ci-system/ci/pkg/scheduler"
 	"github.com/ci-system/ci/pkg/scm"
@@ -79,6 +80,15 @@ func main() {
 		os.Exit(1)
 	} else if opt != nil {
 		grpcOpts = append(grpcOpts, opt)
+	}
+
+	apiToken := auth.TokenFromEnv()
+	if apiToken != "" {
+		logger.Info("API token authentication enabled")
+		grpcOpts = append(grpcOpts,
+			grpc.UnaryInterceptor(auth.UnaryInterceptor(apiToken)),
+			grpc.StreamInterceptor(auth.StreamInterceptor(apiToken)),
+		)
 	}
 	grpcServer := grpc.NewServer(grpcOpts...)
 	pb.RegisterSchedulerServiceServer(grpcServer, newSchedulerServer(sched, router))
