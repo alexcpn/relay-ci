@@ -27,16 +27,18 @@ type workerRegistryServer struct {
 	sched     *scheduler.Scheduler
 	scmRouter *scm.Router
 	logs      *logstore.Store
+	disp      *dispatcher
 	logger    *slog.Logger
 	publicURL string
 }
 
-func newWorkerRegistryServer(reg *worker.Registry, sched *scheduler.Scheduler, scmRouter *scm.Router, logs *logstore.Store, logger *slog.Logger, publicURL string) *workerRegistryServer {
+func newWorkerRegistryServer(reg *worker.Registry, sched *scheduler.Scheduler, scmRouter *scm.Router, logs *logstore.Store, disp *dispatcher, logger *slog.Logger, publicURL string) *workerRegistryServer {
 	return &workerRegistryServer{
 		registry:  reg,
 		sched:     sched,
 		scmRouter: scmRouter,
 		logs:      logs,
+		disp:      disp,
 		logger:    logger,
 		publicURL: publicURL,
 	}
@@ -181,9 +183,11 @@ func (s *workerRegistryServer) ReportTaskResult(ctx context.Context, req *pb.Rep
 		go s.reportTaskStatus(context.Background(), buildID, taskName, scm.StatusError, "Cancelled")
 	}
 
-	// If the build just finished, report overall status and post PR comment.
+	// If the build just finished, report overall status, post PR comment,
+	// and clean up workspace volumes on workers.
 	if completion.BuildID != "" {
 		go s.reportBuildCompletion(context.Background(), completion)
+		go s.cleanupBuildVolumes(context.Background(), completion.BuildID)
 	}
 
 	s.logger.Info("task result received",
@@ -428,6 +432,41 @@ func (s *workerRegistryServer) codeReviewFull(taskID string) string {
 	}
 	sb.WriteString("\n</details>")
 	return sb.String()
+}
+
+// cleanupBuildVolumes asks each worker that participated in a build to
+// remove the workspace volume. Best-effort — failures are logged but ignored.
+func (s *workerRegistryServer) cleanupBuildVolumes(ctx context.Context, buildID string) {
+	if s.sched == nil || s.disp == nil {
+		return
+	}
+
+	workerIDs := s.sched.BuildWorkers(buildID)
+	if len(workerIDs) == 0 {
+		return
+	}
+
+	for _, wID := range workerIDs {
+		client, err := s.disp.getClient(wID)
+		if err != nil {
+			s.logger.Debug("cannot connect to worker for cleanup", "worker_id", wID, "err", err)
+			continue
+		}
+
+		cleanCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		resp, err := client.CleanupBuild(cleanCtx, &pb.CleanupBuildRequest{
+			BuildId: &pb.BuildID{Id: buildID},
+		})
+		cancel()
+
+		if err != nil {
+			s.logger.Warn("volume cleanup RPC failed", "build_id", buildID, "worker_id", wID, "err", err)
+		} else if resp.Success {
+			s.logger.Info("workspace volume cleaned up", "build_id", buildID, "worker_id", wID, "result", resp.Message)
+		} else {
+			s.logger.Warn("workspace volume cleanup unsuccessful", "build_id", buildID, "worker_id", wID, "msg", resp.Message)
+		}
+	}
 }
 
 func protoToTaskState(s pb.TaskState) dag.TaskState {

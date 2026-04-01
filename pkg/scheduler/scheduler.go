@@ -65,6 +65,8 @@ type Scheduler struct {
 	taskWorker map[string]string
 	// taskBuild tracks which build a task belongs to (taskID -> buildID).
 	taskBuild map[string]string
+	// buildWorkers tracks which workers participated in each build (buildID -> set of workerIDs).
+	buildWorkers map[string]map[string]bool
 }
 
 // New creates a scheduler with the given worker registry.
@@ -78,8 +80,9 @@ func New(registry *worker.Registry, assignFn func(TaskAssignment) error, logger 
 		registry:   registry,
 		assignFn:   assignFn,
 		logger:     logger,
-		taskWorker: make(map[string]string),
-		taskBuild:  make(map[string]string),
+		taskWorker:   make(map[string]string),
+		taskBuild:    make(map[string]string),
+		buildWorkers: make(map[string]map[string]bool),
 	}
 }
 
@@ -157,6 +160,10 @@ func (s *Scheduler) Schedule(ctx context.Context) (int, error) {
 			}
 
 			s.taskWorker[task.ID] = workerID
+			if s.buildWorkers[buildID] == nil {
+				s.buildWorkers[buildID] = make(map[string]bool)
+			}
+			s.buildWorkers[buildID][workerID] = true
 
 			// Notify via callback.
 			assignment := TaskAssignment{
@@ -271,6 +278,23 @@ func (s *Scheduler) GetBuild(id string) (*Build, bool) {
 	defer s.mu.Unlock()
 	b, ok := s.builds[id]
 	return b, ok
+}
+
+// BuildWorkers returns the set of worker IDs that participated in a build
+// and removes the tracking entry. Returns nil if no workers are tracked.
+func (s *Scheduler) BuildWorkers(buildID string) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	workers := s.buildWorkers[buildID]
+	delete(s.buildWorkers, buildID)
+	if len(workers) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(workers))
+	for id := range workers {
+		ids = append(ids, id)
+	}
+	return ids
 }
 
 // FindBuildByTask returns the build ID that contains the given task.

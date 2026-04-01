@@ -14,6 +14,9 @@ service WorkerService {
 
   // Cancel a running task on this worker.
   rpc CancelTask(CancelTaskRequest) returns (CancelTaskResponse);
+
+  // Clean up workspace volume and other resources for a completed build.
+  rpc CleanupBuild(CleanupBuildRequest) returns (CleanupBuildResponse);
 }
 
 // WorkerRegistryService runs on the master. Workers call this to register
@@ -125,4 +128,13 @@ message CacheMount {
   string cache_key = 1;       // content-addressable key
   string mount_path = 2;      // where to mount in container, e.g. "/root/.m2"
   bool read_only = 3;
+}
+
+message CleanupBuildRequest {
+  BuildID build_id = 1;
+}
+
+message CleanupBuildResponse {
+  bool success = 1;
+  string message = 2;       // human-readable result, e.g. "removed volume ci-workspace-abc123"
 }

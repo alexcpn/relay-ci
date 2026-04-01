@@ -50,3 +50,19 @@ func (s *workerServer) CancelTask(ctx context.Context, req *pb.CancelTaskRequest
 
 	return &pb.CancelTaskResponse{}, nil
 }
+
+func (s *workerServer) CleanupBuild(ctx context.Context, req *pb.CleanupBuildRequest) (*pb.CleanupBuildResponse, error) {
+	if req.BuildId == nil || req.BuildId.Id == "" {
+		return nil, status.Error(codes.InvalidArgument, "build_id is required")
+	}
+
+	buildID := req.BuildId.Id
+	msg, err := s.exec.cleanupBuildVolume(ctx, buildID)
+	if err != nil {
+		s.logger.Warn("volume cleanup failed", "build_id", buildID, "err", err)
+		return &pb.CleanupBuildResponse{Success: false, Message: err.Error()}, nil
+	}
+
+	s.logger.Info("volume cleanup complete", "build_id", buildID, "result", msg)
+	return &pb.CleanupBuildResponse{Success: true, Message: msg}, nil
+}
