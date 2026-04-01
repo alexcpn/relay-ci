@@ -59,21 +59,53 @@ func (s *Subscriber) Close() {
 }
 
 // Store holds log lines for all tasks in memory, with support for
-// real-time streaming via subscribers.
+// real-time streaming via subscribers and optional file persistence.
 type Store struct {
 	mu          sync.RWMutex
 	logs        map[string][]Line           // taskID -> lines
 	subscribers map[string][]*Subscriber    // taskID -> active subscribers
 	completed   map[string]bool             // taskID -> true if task is done
+	file        *FileBackend                // optional disk persistence
 }
 
-// New creates an empty log store.
+// New creates an empty in-memory log store.
 func New() *Store {
 	return &Store{
 		logs:        make(map[string][]Line),
 		subscribers: make(map[string][]*Subscriber),
 		completed:   make(map[string]bool),
 	}
+}
+
+// NewWithFile creates a log store backed by files in the given directory.
+// Logs are written to both memory and disk. Existing logs are loaded on startup.
+func NewWithFile(dir string) (*Store, error) {
+	fb, err := NewFileBackend(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	s := &Store{
+		logs:        make(map[string][]Line),
+		subscribers: make(map[string][]*Subscriber),
+		completed:   make(map[string]bool),
+		file:        fb,
+	}
+
+	// Load existing logs from disk.
+	tasks, err := fb.ListTasks()
+	if err != nil {
+		return nil, fmt.Errorf("logstore: list tasks: %w", err)
+	}
+	for _, taskID := range tasks {
+		lines, err := fb.Load(taskID)
+		if err != nil {
+			return nil, fmt.Errorf("logstore: load task %s: %w", taskID, err)
+		}
+		s.logs[taskID] = lines
+	}
+
+	return s, nil
 }
 
 // Append adds log lines for a task. Notifies all subscribers.
@@ -93,6 +125,12 @@ func (s *Store) Append(taskID string, lines []Line) {
 	}
 
 	s.logs[taskID] = append(existing, lines...)
+
+	// Write-through to disk if file backend is configured.
+	if s.file != nil {
+		// Best-effort — don't fail the in-memory append on disk errors.
+		_ = s.file.Append(taskID, lines)
+	}
 
 	// Notify subscribers.
 	for _, sub := range s.subscribers[taskID] {
