@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	pb "github.com/ci-system/ci/gen/ci/v1"
+	"github.com/ci-system/ci/pkg/observability"
 	"github.com/ci-system/ci/pkg/scheduler"
 	"github.com/ci-system/ci/pkg/scm"
 	"github.com/ci-system/ci/pkg/secrets"
@@ -102,6 +103,8 @@ func (h *webhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	observability.WebhooksTotal.WithLabelValues(event.Provider.String(), event.Type.String()).Inc()
+
 	h.logger.Info("webhook received",
 		"provider", event.Provider,
 		"type", event.Type,
@@ -170,6 +173,7 @@ func (h *webhookHandler) handlePush(w http.ResponseWriter, r *http.Request, even
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	observability.BuildsInProgress.Inc()
 
 	h.reportStatus(r.Context(), build, scm.StatusPending, "Build queued")
 
@@ -242,6 +246,7 @@ func (h *webhookHandler) handlePR(w http.ResponseWriter, r *http.Request, event 
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	observability.BuildsInProgress.Inc()
 
 	h.reportStatus(r.Context(), build, scm.StatusPending, "Build queued")
 

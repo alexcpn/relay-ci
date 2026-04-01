@@ -14,6 +14,7 @@ import (
 	pb "github.com/ci-system/ci/gen/ci/v1"
 	"github.com/ci-system/ci/pkg/dag"
 	"github.com/ci-system/ci/pkg/logstore"
+	"github.com/ci-system/ci/pkg/observability"
 	"github.com/ci-system/ci/pkg/scheduler"
 	"github.com/ci-system/ci/pkg/scm"
 	"github.com/ci-system/ci/pkg/worker"
@@ -135,6 +136,29 @@ func (s *workerRegistryServer) ReportTaskResult(ctx context.Context, req *pb.Rep
 	})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "handling task result: %v", err)
+	}
+
+	// Record task metrics.
+	observability.TasksTotal.WithLabelValues(taskState.String()).Inc()
+	if req.Result.StartedAt != nil && req.Result.FinishedAt != nil {
+		dur := req.Result.FinishedAt.AsTime().Sub(req.Result.StartedAt.AsTime()).Seconds()
+		if dur > 0 {
+			observability.TaskDuration.WithLabelValues(taskState.String()).Observe(dur)
+		}
+	}
+
+	// If the build just finished, record build metrics.
+	if completion.BuildID != "" {
+		finalState := "failed"
+		if completion.Passed {
+			finalState = "passed"
+		}
+		observability.BuildsTotal.WithLabelValues(finalState).Inc()
+		observability.BuildsInProgress.Dec()
+		if build, ok := s.sched.GetBuild(buildID); ok && !build.StartedAt.IsZero() {
+			dur := time.Since(build.StartedAt).Seconds()
+			observability.BuildDuration.WithLabelValues(finalState).Observe(dur)
+		}
 	}
 
 	// Report per-task status to SCM.

@@ -13,6 +13,8 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/ci-system/ci/pkg/observability"
+
 	pb "github.com/ci-system/ci/gen/ci/v1"
 	"github.com/ci-system/ci/pkg/dag"
 	"github.com/ci-system/ci/pkg/pipeline"
@@ -76,6 +78,7 @@ func (s *schedulerServer) SubmitBuild(ctx context.Context, req *pb.SubmitBuildRe
 	if err := s.sched.SubmitBuild(build); err != nil {
 		return nil, status.Errorf(codes.AlreadyExists, "%v", err)
 	}
+	observability.BuildsInProgress.Inc()
 
 	return &pb.SubmitBuildResponse{
 		BuildId: &pb.BuildID{Id: buildID},

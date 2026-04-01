@@ -13,9 +13,12 @@ import (
 
 	"google.golang.org/grpc"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+
 	pb "github.com/ci-system/ci/gen/ci/v1"
 	"github.com/ci-system/ci/pkg/auth"
 	"github.com/ci-system/ci/pkg/logstore"
+	"github.com/ci-system/ci/pkg/observability"
 	"github.com/ci-system/ci/pkg/scheduler"
 	"github.com/ci-system/ci/pkg/scm"
 	"github.com/ci-system/ci/pkg/secrets"
@@ -100,6 +103,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.Handle("/webhooks", newWebhookHandler(router, sched, logger, webhookSecret, secretStore, publicURL))
+	mux.Handle("/metrics", promhttp.Handler())
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"status":"ok"}`))
@@ -130,12 +134,29 @@ func main() {
 		for {
 			select {
 			case <-ticker.C:
+				observability.SchedulingCycles.Inc()
 				n, err := sched.Schedule(ctx)
 				if err != nil {
+					observability.SchedulingErrors.Inc()
 					logger.Error("scheduling error", "err", err)
 				}
 				if n > 0 {
 					logger.Info("scheduled tasks", "count", n)
+				}
+
+				// Update worker gauges.
+				activeWorkers := registry.Active()
+				observability.WorkersActive.Set(float64(len(activeWorkers)))
+				for _, w := range activeWorkers {
+					observability.WorkerTasksRunning.WithLabelValues(w.ID).Set(float64(w.RunningTasks))
+					if w.TotalCPU > 0 {
+						observability.WorkerCPUUtilization.WithLabelValues(w.ID).Set(
+							1.0 - float64(w.AvailableCPU)/float64(w.TotalCPU))
+					}
+					if w.TotalMemoryMB > 0 {
+						observability.WorkerMemoryUtilization.WithLabelValues(w.ID).Set(
+							1.0 - float64(w.AvailableMemoryMB)/float64(w.TotalMemoryMB))
+					}
 				}
 
 				// Check for dead workers.
