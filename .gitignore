@@ -2,3 +2,4 @@ gen/
 bin/*
 /.run/*
 .secrets.env
+.certs/
