@@ -323,8 +323,8 @@ func (s *workerRegistryServer) buildPRComment(c scheduler.BuildCompletion, logsU
 			details = s.taskLogSnippet(task.ID, 10)
 		}
 
-		sb.WriteString(fmt.Sprintf("| %s | %s %s | %s | %s |\n",
-			task.Name, icon, task.State, dur, details))
+		fmt.Fprintf(&sb, "| %s | %s %s | %s | %s |\n",
+			task.Name, icon, task.State, dur, details)
 	}
 
 	sb.WriteString("\n---\n")
@@ -425,7 +425,7 @@ func (s *workerRegistryServer) codeReviewFull(taskID string) string {
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("<details><summary>%s</summary>\n\n", summary))
+	fmt.Fprintf(&sb, "<details><summary>%s</summary>\n\n", summary)
 	for _, line := range reviewLines {
 		sb.WriteString(line)
 		sb.WriteString("\n")
