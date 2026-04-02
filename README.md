@@ -405,9 +405,15 @@ test/e2e              1 test    Live build against real GitHub repo (CI_E2E=1)
 | Phase | Scope | Status |
 |---|---|---|
 | **Phase 1: Single-node** | DAG engine, scheduler, Docker execution, CLI, webhooks, MCP server | **Complete** |
-| **Phase 2: Distribution** | NATS task queue, remote workers, shared MinIO cache | Planned |
-| **Phase 3: Security** | Firecracker VM isolation, Vault secrets, mTLS, audit logging | Planned |
-| **Phase 4: Agent Workflows** | Agent-triggered pipelines, auto-fix loops, policy enforcement SDK | Planned |
+| **Phase 1.5: Hardening** | TLS/mTLS, gRPC auth, Prometheus metrics, durable logs, conditional steps, workspace cleanup | **Complete** |
+| **Phase 2: Persistence & Reliability** | PostgreSQL build history, artifact storage (S3/MinIO), NATS task queue, dead-worker auto-reassignment | Planned |
+| **Phase 3: Security** | RBAC/multi-tenancy, Vault integration, audit logging, container sandboxing (Firecracker/gVisor), webhook rate limiting | Planned |
+| **Phase 4: Observability** | OpenTelemetry distributed tracing, alerting (Slack/PagerDuty), Grafana dashboards | Planned |
+| **Phase 5: Pipeline Features** | Matrix builds, artifact upload/download, manual approval gates, pipeline-level timeouts, template expansion | Planned |
+| **Phase 6: Agent Workflows** | Agent-triggered pipelines, auto-fix loops, policy enforcement SDK, horizontal worker auto-scaling | Planned |
+| **Phase 7: Web UI** | Build list/detail views, real-time log viewer, worker status page, secret management UI | Planned |
+
+See the **[full feature backlog](backlog.md)** for detailed items and priorities.
 
 ---
 
