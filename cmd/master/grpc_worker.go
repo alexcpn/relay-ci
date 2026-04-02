@@ -293,12 +293,12 @@ func (s *workerRegistryServer) buildPRComment(c scheduler.BuildCompletion, logsU
 		sb.WriteString("## ❌ Relay CI — Build Failed\n\n")
 	}
 
-	sb.WriteString(fmt.Sprintf("**Build:** `%s`", b.ID))
+	fmt.Fprintf(&sb, "**Build:** `%s`", b.ID)
 	if b.Branch != "" {
-		sb.WriteString(fmt.Sprintf(" · **Branch:** `%s`", b.Branch))
+		fmt.Fprintf(&sb, " · **Branch:** `%s`", b.Branch)
 	}
 	if logsURL != "" {
-		sb.WriteString(fmt.Sprintf(" · [View Logs](%s)", logsURL))
+		fmt.Fprintf(&sb, " · [View Logs](%s)", logsURL)
 	}
 	sb.WriteString("\n\n")
 
