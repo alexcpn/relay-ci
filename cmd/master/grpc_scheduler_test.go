@@ -124,6 +124,16 @@ tasks:
 	}
 }
 
+func TestLocalRepoHostPath_FileURI(t *testing.T) {
+	path, ok := localRepoHostPath("file:///ssd/coding/fox2")
+	if !ok {
+		t.Fatal("expected file URI to be recognized as local repo")
+	}
+	if path != "/ssd/coding/fox2" {
+		t.Fatalf("expected /ssd/coding/fox2, got %q", path)
+	}
+}
+
 // initTestRepo creates a git repo with an optional pipeline.yml at its root.
 func initTestRepo(t *testing.T, dir, pipelineYML string) {
 	t.Helper()

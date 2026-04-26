@@ -83,6 +83,7 @@ export WEBHOOK_SECRET="your-webhook-secret"    # same secret you set in GitHub
 # Optional
 export GRPC_ADDR=":9090"                       # gRPC API (default :9090)
 export HTTP_ADDR=":8080"                       # webhooks + health (default :8080)
+export DATA_ROOT=".relay-ci"                   # pipeline digest pins + verify bundles
 export PUBLIC_URL="http://ci.example.com:8080" # public base URL — enables "Details" links on GitHub commit statuses
 export SECRETS_FILE=".secrets.env"             # path to secrets file (default: .secrets.env in working dir)
 
@@ -183,6 +184,10 @@ The Details link will open `$PUBLIC_URL/logs?build_id=<id>` showing the full tas
 
 Create `pipeline.yaml` in your repo root:
 
+For a copyable starter, use:
+- [`examples/pipeline.yaml`](examples/pipeline.yaml) for a Go service
+- [`examples/wails-pipeline.yaml`](examples/wails-pipeline.yaml) for a Wails app
+
 ```yaml
 name: my-app
 
@@ -255,6 +260,28 @@ git push origin main
 # Cancel a build
 ./bin/ci-cli cancel <build-id>
 ```
+
+### Local verify
+
+Use `verify` when you want the master to pin the current `pipeline.yaml` digest for a local checkout and refuse to run if that file changes unexpectedly.
+
+```bash
+# First run pins the pipeline digest and starts the build.
+./bin/ci-cli verify ~/src/myrepo
+
+# If you intentionally changed pipeline.yaml, accept and re-pin it.
+./bin/ci-cli verify --accept-pipeline-change ~/src/myrepo
+
+# Inspect or clean up pins.
+./bin/ci-cli pipeline-pin list
+./bin/ci-cli pipeline-pin unpin <root-commit-sha>
+```
+
+Verify uses the repo's root commit SHA as the project ID, stores pins in `DATA_ROOT/pipeline-digests.json`, and exits with:
+- `0` when the build passes
+- `1` when the build or review fails
+- `2` when pipeline tamper is detected
+- `3` on CLI or infrastructure errors
 
 ### Option D: curl the webhook endpoint
 

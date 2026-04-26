@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -155,15 +156,37 @@ func (e *executor) executeTask(ctx context.Context, req *pb.AssignTaskRequest) {
 
 // runInDocker runs the task commands inside a Docker container.
 func (e *executor) runInDocker(ctx context.Context, req *pb.AssignTaskRequest, taskID, buildID string) (int, error) {
-	// Build docker run command.
+	args, err := dockerRunArgs(req, buildID)
+	if err != nil {
+		return -1, err
+	}
+	return e.runCommand(ctx, "docker", args, nil, taskID, buildID)
+}
+
+// runInShell runs the task commands directly in a shell (fallback when Docker is unavailable).
+func (e *executor) runInShell(ctx context.Context, req *pb.AssignTaskRequest, taskID, buildID string) (int, error) {
+	shellReq := *req
+	shellReq.Env = make(map[string]string, len(req.Env))
+	for k, v := range req.Env {
+		shellReq.Env[k] = v
+	}
+	if bundlePath := shellReq.Env["RELAY_BUNDLE_PATH"]; bundlePath != "" {
+		// Shell fallback runs on the worker host, so use the host path directly.
+		shellReq.Env["REPO_URL"] = bundlePath
+	}
+
+	cmdStr := strings.Join(shellReq.Commands, " && ")
+	return e.runCommand(ctx, "sh", []string{"-c", cmdStr}, shellReq.Env, taskID, buildID)
+}
+
+// dockerRunArgs builds the docker command line for a task.
+func dockerRunArgs(req *pb.AssignTaskRequest, buildID string) ([]string, error) {
 	args := []string{"run", "--rm"}
 
-	// Set env vars.
 	for k, v := range req.Env {
 		args = append(args, "-e", k+"="+v)
 	}
 
-	// Resource limits.
 	if req.Resources != nil {
 		if req.Resources.MemoryMb > 0 {
 			args = append(args, "--memory", fmt.Sprintf("%dm", req.Resources.MemoryMb))
@@ -174,25 +197,27 @@ func (e *executor) runInDocker(ctx context.Context, req *pb.AssignTaskRequest, t
 		}
 	}
 
-	// Override the entrypoint to sh so arbitrary commands work regardless
-	// of what the image sets as its default entrypoint (e.g. alpine/git
-	// sets entrypoint=git, which would intercept "sh -c ...").
 	args = append(args, "--entrypoint", "sh")
-
-	// Mount a named volume shared across all tasks in this build so the
-	// clone task's /workspace is visible to build/test/lint tasks.
-	// Docker creates the volume automatically on first use.
 	args = append(args, "--volume", "ci-workspace-"+buildID+":/workspace")
 
-	// Mount cache volumes declared by the task (e.g. Go module cache,
-	// npm cache, trivy DB). Volume names are derived from the cache key
-	// so the same key reuses the same volume across builds.
-	// Docker creates volumes automatically on first use.
+	if bundlePath := req.Env["RELAY_BUNDLE_PATH"]; bundlePath != "" {
+		if _, err := os.Stat(bundlePath); err != nil {
+			return nil, fmt.Errorf("verify bundle path %q not accessible on worker: %w", bundlePath, err)
+		}
+		args = append(args, "--volume", bundlePath+":/relay-bundle.git:ro")
+	}
+
+	if repoPath := req.Env["RELAY_LOCAL_REPO_PATH"]; repoPath != "" {
+		if _, err := os.Stat(repoPath); err != nil {
+			return nil, fmt.Errorf("local repo path %q not accessible on worker: %w", repoPath, err)
+		}
+		args = append(args, "--volume", repoPath+":/relay-local-repo:ro")
+	}
+
 	for _, cm := range req.CacheMounts {
 		if cm.MountPath == "" {
 			continue
 		}
-		// Sanitise the cache key into a valid Docker volume name.
 		volName := "ci-cache-" + sanitiseVolumeName(cm.CacheKey)
 		mount := volName + ":" + cm.MountPath
 		if cm.ReadOnly {
@@ -201,30 +226,24 @@ func (e *executor) runInDocker(ctx context.Context, req *pb.AssignTaskRequest, t
 		args = append(args, "--volume", mount)
 	}
 
-	// All tasks run from /workspace where the repo was cloned.
 	args = append(args, "--workdir", "/workspace")
-
-	// Image.
 	args = append(args, req.ContainerImage)
-
-	// Commands — join with && for shell execution inside container.
 	if len(req.Commands) > 0 {
 		args = append(args, "-c", strings.Join(req.Commands, " && "))
 	}
-
-	return e.runCommand(ctx, "docker", args, taskID, buildID)
-}
-
-// runInShell runs the task commands directly in a shell (fallback when Docker is unavailable).
-func (e *executor) runInShell(ctx context.Context, req *pb.AssignTaskRequest, taskID, buildID string) (int, error) {
-	cmdStr := strings.Join(req.Commands, " && ")
-	return e.runCommand(ctx, "sh", []string{"-c", cmdStr}, taskID, buildID)
+	return args, nil
 }
 
 // runCommand executes a command, streams stdout/stderr to the log service,
 // and returns the exit code.
-func (e *executor) runCommand(ctx context.Context, name string, args []string, taskID, buildID string) (int, error) {
+func (e *executor) runCommand(ctx context.Context, name string, args []string, env map[string]string, taskID, buildID string) (int, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
+	if len(env) > 0 {
+		cmd.Env = os.Environ()
+		for k, v := range env {
+			cmd.Env = append(cmd.Env, k+"="+v)
+		}
+	}
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

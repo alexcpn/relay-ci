@@ -19,12 +19,15 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	SchedulerService_SubmitBuild_FullMethodName = "/ci.v1.SchedulerService/SubmitBuild"
-	SchedulerService_CancelBuild_FullMethodName = "/ci.v1.SchedulerService/CancelBuild"
-	SchedulerService_RetryBuild_FullMethodName  = "/ci.v1.SchedulerService/RetryBuild"
-	SchedulerService_GetBuild_FullMethodName    = "/ci.v1.SchedulerService/GetBuild"
-	SchedulerService_ListBuilds_FullMethodName  = "/ci.v1.SchedulerService/ListBuilds"
-	SchedulerService_WatchBuild_FullMethodName  = "/ci.v1.SchedulerService/WatchBuild"
+	SchedulerService_SubmitBuild_FullMethodName      = "/ci.v1.SchedulerService/SubmitBuild"
+	SchedulerService_CancelBuild_FullMethodName      = "/ci.v1.SchedulerService/CancelBuild"
+	SchedulerService_RetryBuild_FullMethodName       = "/ci.v1.SchedulerService/RetryBuild"
+	SchedulerService_GetBuild_FullMethodName         = "/ci.v1.SchedulerService/GetBuild"
+	SchedulerService_ListBuilds_FullMethodName       = "/ci.v1.SchedulerService/ListBuilds"
+	SchedulerService_WatchBuild_FullMethodName       = "/ci.v1.SchedulerService/WatchBuild"
+	SchedulerService_VerifyLocal_FullMethodName      = "/ci.v1.SchedulerService/VerifyLocal"
+	SchedulerService_ListPipelinePins_FullMethodName = "/ci.v1.SchedulerService/ListPipelinePins"
+	SchedulerService_UnpinPipeline_FullMethodName    = "/ci.v1.SchedulerService/UnpinPipeline"
 )
 
 // SchedulerServiceClient is the client API for SchedulerService service.
@@ -47,6 +50,17 @@ type SchedulerServiceClient interface {
 	ListBuilds(ctx context.Context, in *ListBuildsRequest, opts ...grpc.CallOption) (*ListBuildsResponse, error)
 	// Stream build state changes in real time.
 	WatchBuild(ctx context.Context, in *WatchBuildRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[BuildEvent], error)
+	// VerifyLocal accepts a git bundle of a local feature branch, pins/checks
+	// the pipeline.yaml digest (TOFU), then submits a build using the existing
+	// pipeline machinery. The CLI streams the bundle bytes after the header.
+	// Returns the build_id once accepted, or a digest mismatch reason.
+	VerifyLocal(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[VerifyLocalRequest, VerifyLocalResponse], error)
+	// ListPipelinePins returns all currently pinned pipeline digests, keyed by
+	// the project's root commit SHA.
+	ListPipelinePins(ctx context.Context, in *ListPipelinePinsRequest, opts ...grpc.CallOption) (*ListPipelinePinsResponse, error)
+	// UnpinPipeline removes a pinned pipeline digest so the next verify will
+	// re-pin from scratch.
+	UnpinPipeline(ctx context.Context, in *UnpinPipelineRequest, opts ...grpc.CallOption) (*UnpinPipelineResponse, error)
 }
 
 type schedulerServiceClient struct {
@@ -126,6 +140,39 @@ func (c *schedulerServiceClient) WatchBuild(ctx context.Context, in *WatchBuildR
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type SchedulerService_WatchBuildClient = grpc.ServerStreamingClient[BuildEvent]
 
+func (c *schedulerServiceClient) VerifyLocal(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[VerifyLocalRequest, VerifyLocalResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &SchedulerService_ServiceDesc.Streams[1], SchedulerService_VerifyLocal_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[VerifyLocalRequest, VerifyLocalResponse]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type SchedulerService_VerifyLocalClient = grpc.ClientStreamingClient[VerifyLocalRequest, VerifyLocalResponse]
+
+func (c *schedulerServiceClient) ListPipelinePins(ctx context.Context, in *ListPipelinePinsRequest, opts ...grpc.CallOption) (*ListPipelinePinsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListPipelinePinsResponse)
+	err := c.cc.Invoke(ctx, SchedulerService_ListPipelinePins_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *schedulerServiceClient) UnpinPipeline(ctx context.Context, in *UnpinPipelineRequest, opts ...grpc.CallOption) (*UnpinPipelineResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UnpinPipelineResponse)
+	err := c.cc.Invoke(ctx, SchedulerService_UnpinPipeline_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SchedulerServiceServer is the server API for SchedulerService service.
 // All implementations must embed UnimplementedSchedulerServiceServer
 // for forward compatibility.
@@ -146,6 +193,17 @@ type SchedulerServiceServer interface {
 	ListBuilds(context.Context, *ListBuildsRequest) (*ListBuildsResponse, error)
 	// Stream build state changes in real time.
 	WatchBuild(*WatchBuildRequest, grpc.ServerStreamingServer[BuildEvent]) error
+	// VerifyLocal accepts a git bundle of a local feature branch, pins/checks
+	// the pipeline.yaml digest (TOFU), then submits a build using the existing
+	// pipeline machinery. The CLI streams the bundle bytes after the header.
+	// Returns the build_id once accepted, or a digest mismatch reason.
+	VerifyLocal(grpc.ClientStreamingServer[VerifyLocalRequest, VerifyLocalResponse]) error
+	// ListPipelinePins returns all currently pinned pipeline digests, keyed by
+	// the project's root commit SHA.
+	ListPipelinePins(context.Context, *ListPipelinePinsRequest) (*ListPipelinePinsResponse, error)
+	// UnpinPipeline removes a pinned pipeline digest so the next verify will
+	// re-pin from scratch.
+	UnpinPipeline(context.Context, *UnpinPipelineRequest) (*UnpinPipelineResponse, error)
 	mustEmbedUnimplementedSchedulerServiceServer()
 }
 
@@ -173,6 +231,15 @@ func (UnimplementedSchedulerServiceServer) ListBuilds(context.Context, *ListBuil
 }
 func (UnimplementedSchedulerServiceServer) WatchBuild(*WatchBuildRequest, grpc.ServerStreamingServer[BuildEvent]) error {
 	return status.Error(codes.Unimplemented, "method WatchBuild not implemented")
+}
+func (UnimplementedSchedulerServiceServer) VerifyLocal(grpc.ClientStreamingServer[VerifyLocalRequest, VerifyLocalResponse]) error {
+	return status.Error(codes.Unimplemented, "method VerifyLocal not implemented")
+}
+func (UnimplementedSchedulerServiceServer) ListPipelinePins(context.Context, *ListPipelinePinsRequest) (*ListPipelinePinsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListPipelinePins not implemented")
+}
+func (UnimplementedSchedulerServiceServer) UnpinPipeline(context.Context, *UnpinPipelineRequest) (*UnpinPipelineResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UnpinPipeline not implemented")
 }
 func (UnimplementedSchedulerServiceServer) mustEmbedUnimplementedSchedulerServiceServer() {}
 func (UnimplementedSchedulerServiceServer) testEmbeddedByValue()                          {}
@@ -296,6 +363,49 @@ func _SchedulerService_WatchBuild_Handler(srv interface{}, stream grpc.ServerStr
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type SchedulerService_WatchBuildServer = grpc.ServerStreamingServer[BuildEvent]
 
+func _SchedulerService_VerifyLocal_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(SchedulerServiceServer).VerifyLocal(&grpc.GenericServerStream[VerifyLocalRequest, VerifyLocalResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type SchedulerService_VerifyLocalServer = grpc.ClientStreamingServer[VerifyLocalRequest, VerifyLocalResponse]
+
+func _SchedulerService_ListPipelinePins_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListPipelinePinsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SchedulerServiceServer).ListPipelinePins(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SchedulerService_ListPipelinePins_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SchedulerServiceServer).ListPipelinePins(ctx, req.(*ListPipelinePinsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SchedulerService_UnpinPipeline_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UnpinPipelineRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SchedulerServiceServer).UnpinPipeline(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SchedulerService_UnpinPipeline_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SchedulerServiceServer).UnpinPipeline(ctx, req.(*UnpinPipelineRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SchedulerService_ServiceDesc is the grpc.ServiceDesc for SchedulerService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -323,12 +433,25 @@ var SchedulerService_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "ListBuilds",
 			Handler:    _SchedulerService_ListBuilds_Handler,
 		},
+		{
+			MethodName: "ListPipelinePins",
+			Handler:    _SchedulerService_ListPipelinePins_Handler,
+		},
+		{
+			MethodName: "UnpinPipeline",
+			Handler:    _SchedulerService_UnpinPipeline_Handler,
+		},
 	},
 	Streams: []grpc.StreamDesc{
 		{
 			StreamName:    "WatchBuild",
 			Handler:       _SchedulerService_WatchBuild_Handler,
 			ServerStreams: true,
+		},
+		{
+			StreamName:    "VerifyLocal",
+			Handler:       _SchedulerService_VerifyLocal_Handler,
+			ClientStreams: true,
 		},
 	},
 	Metadata: "ci/v1/scheduler.proto",

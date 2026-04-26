@@ -34,6 +34,7 @@ func main() {
 
 	grpcAddr := envOrDefault("GRPC_ADDR", ":9090")
 	httpAddr := envOrDefault("HTTP_ADDR", ":8080")
+	dataRoot := envOrDefault("DATA_ROOT", ".relay-ci")
 	webhookSecret := os.Getenv("WEBHOOK_SECRET")
 	publicURL := os.Getenv("PUBLIC_URL") // e.g. "http://ci.example.com:8080" for Details links
 
@@ -75,6 +76,12 @@ func main() {
 	gl := scm.NewGitLab(nil, "")
 	router := scm.NewRouter(gh, gl)
 
+	verifySrv, err := newVerifyServer(dataRoot, logger)
+	if err != nil {
+		logger.Error("failed to initialize verify storage", "data_root", dataRoot, "err", err)
+		os.Exit(1)
+	}
+
 	// Create the worker registry server first so the scheduler dispatch
 	// callback can call reportTaskStatus on it (for per-task pending statuses).
 	workerSrv := newWorkerRegistryServer(registry, nil, router, logs, disp, logger, publicURL)
@@ -107,7 +114,7 @@ func main() {
 		)
 	}
 	grpcServer := grpc.NewServer(grpcOpts...)
-	pb.RegisterSchedulerServiceServer(grpcServer, newSchedulerServer(sched, router))
+	pb.RegisterSchedulerServiceServer(grpcServer, newSchedulerServer(sched, router, verifySrv))
 	pb.RegisterWorkerRegistryServiceServer(grpcServer, workerSrv)
 	pb.RegisterLogServiceServer(grpcServer, newLogServer(logs))
 	pb.RegisterSecretsServiceServer(grpcServer, newSecretsServer(secretStore))

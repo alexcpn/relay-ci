@@ -22,6 +22,61 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type PipelineDigestStatus int32
+
+const (
+	PipelineDigestStatus_PIPELINE_DIGEST_STATUS_UNSPECIFIED PipelineDigestStatus = 0
+	PipelineDigestStatus_PIPELINE_DIGEST_STATUS_OK          PipelineDigestStatus = 1 // matched existing pin
+	PipelineDigestStatus_PIPELINE_DIGEST_STATUS_PINNED      PipelineDigestStatus = 2 // first-time pin recorded
+	PipelineDigestStatus_PIPELINE_DIGEST_STATUS_CHANGED     PipelineDigestStatus = 3 // mismatch — build refused
+	PipelineDigestStatus_PIPELINE_DIGEST_STATUS_ACCEPTED    PipelineDigestStatus = 4 // mismatch but caller accepted
+)
+
+// Enum value maps for PipelineDigestStatus.
+var (
+	PipelineDigestStatus_name = map[int32]string{
+		0: "PIPELINE_DIGEST_STATUS_UNSPECIFIED",
+		1: "PIPELINE_DIGEST_STATUS_OK",
+		2: "PIPELINE_DIGEST_STATUS_PINNED",
+		3: "PIPELINE_DIGEST_STATUS_CHANGED",
+		4: "PIPELINE_DIGEST_STATUS_ACCEPTED",
+	}
+	PipelineDigestStatus_value = map[string]int32{
+		"PIPELINE_DIGEST_STATUS_UNSPECIFIED": 0,
+		"PIPELINE_DIGEST_STATUS_OK":          1,
+		"PIPELINE_DIGEST_STATUS_PINNED":      2,
+		"PIPELINE_DIGEST_STATUS_CHANGED":     3,
+		"PIPELINE_DIGEST_STATUS_ACCEPTED":    4,
+	}
+)
+
+func (x PipelineDigestStatus) Enum() *PipelineDigestStatus {
+	p := new(PipelineDigestStatus)
+	*p = x
+	return p
+}
+
+func (x PipelineDigestStatus) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (PipelineDigestStatus) Descriptor() protoreflect.EnumDescriptor {
+	return file_ci_v1_scheduler_proto_enumTypes[0].Descriptor()
+}
+
+func (PipelineDigestStatus) Type() protoreflect.EnumType {
+	return &file_ci_v1_scheduler_proto_enumTypes[0]
+}
+
+func (x PipelineDigestStatus) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use PipelineDigestStatus.Descriptor instead.
+func (PipelineDigestStatus) EnumDescriptor() ([]byte, []int) {
+	return file_ci_v1_scheduler_proto_rawDescGZIP(), []int{0}
+}
+
 type SubmitBuildRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Source        *GitSource             `protobuf:"bytes,1,opt,name=source,proto3" json:"source,omitempty"`
@@ -1028,6 +1083,516 @@ func (x *TaskStateChanged) GetResult() *TaskResult {
 	return nil
 }
 
+type VerifyLocalRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Payload:
+	//
+	//	*VerifyLocalRequest_Header
+	//	*VerifyLocalRequest_Chunk
+	Payload       isVerifyLocalRequest_Payload `protobuf_oneof:"payload"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *VerifyLocalRequest) Reset() {
+	*x = VerifyLocalRequest{}
+	mi := &file_ci_v1_scheduler_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *VerifyLocalRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VerifyLocalRequest) ProtoMessage() {}
+
+func (x *VerifyLocalRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_ci_v1_scheduler_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VerifyLocalRequest.ProtoReflect.Descriptor instead.
+func (*VerifyLocalRequest) Descriptor() ([]byte, []int) {
+	return file_ci_v1_scheduler_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *VerifyLocalRequest) GetPayload() isVerifyLocalRequest_Payload {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
+
+func (x *VerifyLocalRequest) GetHeader() *VerifyLocalHeader {
+	if x != nil {
+		if x, ok := x.Payload.(*VerifyLocalRequest_Header); ok {
+			return x.Header
+		}
+	}
+	return nil
+}
+
+func (x *VerifyLocalRequest) GetChunk() []byte {
+	if x != nil {
+		if x, ok := x.Payload.(*VerifyLocalRequest_Chunk); ok {
+			return x.Chunk
+		}
+	}
+	return nil
+}
+
+type isVerifyLocalRequest_Payload interface {
+	isVerifyLocalRequest_Payload()
+}
+
+type VerifyLocalRequest_Header struct {
+	Header *VerifyLocalHeader `protobuf:"bytes,1,opt,name=header,proto3,oneof"`
+}
+
+type VerifyLocalRequest_Chunk struct {
+	Chunk []byte `protobuf:"bytes,2,opt,name=chunk,proto3,oneof"` // git bundle bytes
+}
+
+func (*VerifyLocalRequest_Header) isVerifyLocalRequest_Payload() {}
+
+func (*VerifyLocalRequest_Chunk) isVerifyLocalRequest_Payload() {}
+
+type VerifyLocalHeader struct {
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	ProjectId            string                 `protobuf:"bytes,1,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`                                     // sha1 of the repo's root commit
+	RepoName             string                 `protobuf:"bytes,2,opt,name=repo_name,json=repoName,proto3" json:"repo_name,omitempty"`                                        // human label, e.g. basename of repo path
+	Branch               string                 `protobuf:"bytes,3,opt,name=branch,proto3" json:"branch,omitempty"`                                                            // branch to verify
+	BaseBranch           string                 `protobuf:"bytes,4,opt,name=base_branch,json=baseBranch,proto3" json:"base_branch,omitempty"`                                  // diff target / pipeline source
+	CommitSha            string                 `protobuf:"bytes,5,opt,name=commit_sha,json=commitSha,proto3" json:"commit_sha,omitempty"`                                     // tip of branch
+	AcceptPipelineChange bool                   `protobuf:"varint,6,opt,name=accept_pipeline_change,json=acceptPipelineChange,proto3" json:"accept_pipeline_change,omitempty"` // re-pin if digest differs
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
+}
+
+func (x *VerifyLocalHeader) Reset() {
+	*x = VerifyLocalHeader{}
+	mi := &file_ci_v1_scheduler_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *VerifyLocalHeader) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VerifyLocalHeader) ProtoMessage() {}
+
+func (x *VerifyLocalHeader) ProtoReflect() protoreflect.Message {
+	mi := &file_ci_v1_scheduler_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VerifyLocalHeader.ProtoReflect.Descriptor instead.
+func (*VerifyLocalHeader) Descriptor() ([]byte, []int) {
+	return file_ci_v1_scheduler_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *VerifyLocalHeader) GetProjectId() string {
+	if x != nil {
+		return x.ProjectId
+	}
+	return ""
+}
+
+func (x *VerifyLocalHeader) GetRepoName() string {
+	if x != nil {
+		return x.RepoName
+	}
+	return ""
+}
+
+func (x *VerifyLocalHeader) GetBranch() string {
+	if x != nil {
+		return x.Branch
+	}
+	return ""
+}
+
+func (x *VerifyLocalHeader) GetBaseBranch() string {
+	if x != nil {
+		return x.BaseBranch
+	}
+	return ""
+}
+
+func (x *VerifyLocalHeader) GetCommitSha() string {
+	if x != nil {
+		return x.CommitSha
+	}
+	return ""
+}
+
+func (x *VerifyLocalHeader) GetAcceptPipelineChange() bool {
+	if x != nil {
+		return x.AcceptPipelineChange
+	}
+	return false
+}
+
+type VerifyLocalResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	BuildId       string                 `protobuf:"bytes,1,opt,name=build_id,json=buildId,proto3" json:"build_id,omitempty"`
+	DigestStatus  PipelineDigestStatus   `protobuf:"varint,2,opt,name=digest_status,json=digestStatus,proto3,enum=ci.v1.PipelineDigestStatus" json:"digest_status,omitempty"`
+	PinnedDigest  string                 `protobuf:"bytes,3,opt,name=pinned_digest,json=pinnedDigest,proto3" json:"pinned_digest,omitempty"`
+	CurrentDigest string                 `protobuf:"bytes,4,opt,name=current_digest,json=currentDigest,proto3" json:"current_digest,omitempty"`
+	PipelineDiff  string                 `protobuf:"bytes,5,opt,name=pipeline_diff,json=pipelineDiff,proto3" json:"pipeline_diff,omitempty"` // unified diff old → new (set when changed)
+	PipelinePath  string                 `protobuf:"bytes,6,opt,name=pipeline_path,json=pipelinePath,proto3" json:"pipeline_path,omitempty"` // pipeline.yml or pipeline.yaml
+	Error         string                 `protobuf:"bytes,7,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *VerifyLocalResponse) Reset() {
+	*x = VerifyLocalResponse{}
+	mi := &file_ci_v1_scheduler_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *VerifyLocalResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VerifyLocalResponse) ProtoMessage() {}
+
+func (x *VerifyLocalResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_ci_v1_scheduler_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VerifyLocalResponse.ProtoReflect.Descriptor instead.
+func (*VerifyLocalResponse) Descriptor() ([]byte, []int) {
+	return file_ci_v1_scheduler_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *VerifyLocalResponse) GetBuildId() string {
+	if x != nil {
+		return x.BuildId
+	}
+	return ""
+}
+
+func (x *VerifyLocalResponse) GetDigestStatus() PipelineDigestStatus {
+	if x != nil {
+		return x.DigestStatus
+	}
+	return PipelineDigestStatus_PIPELINE_DIGEST_STATUS_UNSPECIFIED
+}
+
+func (x *VerifyLocalResponse) GetPinnedDigest() string {
+	if x != nil {
+		return x.PinnedDigest
+	}
+	return ""
+}
+
+func (x *VerifyLocalResponse) GetCurrentDigest() string {
+	if x != nil {
+		return x.CurrentDigest
+	}
+	return ""
+}
+
+func (x *VerifyLocalResponse) GetPipelineDiff() string {
+	if x != nil {
+		return x.PipelineDiff
+	}
+	return ""
+}
+
+func (x *VerifyLocalResponse) GetPipelinePath() string {
+	if x != nil {
+		return x.PipelinePath
+	}
+	return ""
+}
+
+func (x *VerifyLocalResponse) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+type PipelinePin struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ProjectId     string                 `protobuf:"bytes,1,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
+	RepoName      string                 `protobuf:"bytes,2,opt,name=repo_name,json=repoName,proto3" json:"repo_name,omitempty"`
+	Digest        string                 `protobuf:"bytes,3,opt,name=digest,proto3" json:"digest,omitempty"`
+	PipelinePath  string                 `protobuf:"bytes,4,opt,name=pipeline_path,json=pipelinePath,proto3" json:"pipeline_path,omitempty"`
+	FirstSeen     *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=first_seen,json=firstSeen,proto3" json:"first_seen,omitempty"`
+	LastSeen      *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=last_seen,json=lastSeen,proto3" json:"last_seen,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PipelinePin) Reset() {
+	*x = PipelinePin{}
+	mi := &file_ci_v1_scheduler_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PipelinePin) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PipelinePin) ProtoMessage() {}
+
+func (x *PipelinePin) ProtoReflect() protoreflect.Message {
+	mi := &file_ci_v1_scheduler_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PipelinePin.ProtoReflect.Descriptor instead.
+func (*PipelinePin) Descriptor() ([]byte, []int) {
+	return file_ci_v1_scheduler_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *PipelinePin) GetProjectId() string {
+	if x != nil {
+		return x.ProjectId
+	}
+	return ""
+}
+
+func (x *PipelinePin) GetRepoName() string {
+	if x != nil {
+		return x.RepoName
+	}
+	return ""
+}
+
+func (x *PipelinePin) GetDigest() string {
+	if x != nil {
+		return x.Digest
+	}
+	return ""
+}
+
+func (x *PipelinePin) GetPipelinePath() string {
+	if x != nil {
+		return x.PipelinePath
+	}
+	return ""
+}
+
+func (x *PipelinePin) GetFirstSeen() *timestamppb.Timestamp {
+	if x != nil {
+		return x.FirstSeen
+	}
+	return nil
+}
+
+func (x *PipelinePin) GetLastSeen() *timestamppb.Timestamp {
+	if x != nil {
+		return x.LastSeen
+	}
+	return nil
+}
+
+type ListPipelinePinsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListPipelinePinsRequest) Reset() {
+	*x = ListPipelinePinsRequest{}
+	mi := &file_ci_v1_scheduler_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListPipelinePinsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListPipelinePinsRequest) ProtoMessage() {}
+
+func (x *ListPipelinePinsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_ci_v1_scheduler_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListPipelinePinsRequest.ProtoReflect.Descriptor instead.
+func (*ListPipelinePinsRequest) Descriptor() ([]byte, []int) {
+	return file_ci_v1_scheduler_proto_rawDescGZIP(), []int{20}
+}
+
+type ListPipelinePinsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Pins          []*PipelinePin         `protobuf:"bytes,1,rep,name=pins,proto3" json:"pins,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListPipelinePinsResponse) Reset() {
+	*x = ListPipelinePinsResponse{}
+	mi := &file_ci_v1_scheduler_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListPipelinePinsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListPipelinePinsResponse) ProtoMessage() {}
+
+func (x *ListPipelinePinsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_ci_v1_scheduler_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListPipelinePinsResponse.ProtoReflect.Descriptor instead.
+func (*ListPipelinePinsResponse) Descriptor() ([]byte, []int) {
+	return file_ci_v1_scheduler_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *ListPipelinePinsResponse) GetPins() []*PipelinePin {
+	if x != nil {
+		return x.Pins
+	}
+	return nil
+}
+
+type UnpinPipelineRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ProjectId     string                 `protobuf:"bytes,1,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UnpinPipelineRequest) Reset() {
+	*x = UnpinPipelineRequest{}
+	mi := &file_ci_v1_scheduler_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UnpinPipelineRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UnpinPipelineRequest) ProtoMessage() {}
+
+func (x *UnpinPipelineRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_ci_v1_scheduler_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UnpinPipelineRequest.ProtoReflect.Descriptor instead.
+func (*UnpinPipelineRequest) Descriptor() ([]byte, []int) {
+	return file_ci_v1_scheduler_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *UnpinPipelineRequest) GetProjectId() string {
+	if x != nil {
+		return x.ProjectId
+	}
+	return ""
+}
+
+type UnpinPipelineResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Removed       bool                   `protobuf:"varint,1,opt,name=removed,proto3" json:"removed,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UnpinPipelineResponse) Reset() {
+	*x = UnpinPipelineResponse{}
+	mi := &file_ci_v1_scheduler_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UnpinPipelineResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UnpinPipelineResponse) ProtoMessage() {}
+
+func (x *UnpinPipelineResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_ci_v1_scheduler_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UnpinPipelineResponse.ProtoReflect.Descriptor instead.
+func (*UnpinPipelineResponse) Descriptor() ([]byte, []int) {
+	return file_ci_v1_scheduler_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *UnpinPipelineResponse) GetRemoved() bool {
+	if x != nil {
+		return x.Removed
+	}
+	return false
+}
+
 var File_ci_v1_scheduler_proto protoreflect.FileDescriptor
 
 const file_ci_v1_scheduler_proto_rawDesc = "" +
@@ -1108,7 +1673,52 @@ const file_ci_v1_scheduler_proto_rawDesc = "" +
 	"\ttask_name\x18\x02 \x01(\tR\btaskName\x12,\n" +
 	"\bprevious\x18\x03 \x01(\x0e2\x10.ci.v1.TaskStateR\bprevious\x12*\n" +
 	"\acurrent\x18\x04 \x01(\x0e2\x10.ci.v1.TaskStateR\acurrent\x12)\n" +
-	"\x06result\x18\x05 \x01(\v2\x11.ci.v1.TaskResultR\x06result2\x9e\x03\n" +
+	"\x06result\x18\x05 \x01(\v2\x11.ci.v1.TaskResultR\x06result\"k\n" +
+	"\x12VerifyLocalRequest\x122\n" +
+	"\x06header\x18\x01 \x01(\v2\x18.ci.v1.VerifyLocalHeaderH\x00R\x06header\x12\x16\n" +
+	"\x05chunk\x18\x02 \x01(\fH\x00R\x05chunkB\t\n" +
+	"\apayload\"\xdd\x01\n" +
+	"\x11VerifyLocalHeader\x12\x1d\n" +
+	"\n" +
+	"project_id\x18\x01 \x01(\tR\tprojectId\x12\x1b\n" +
+	"\trepo_name\x18\x02 \x01(\tR\brepoName\x12\x16\n" +
+	"\x06branch\x18\x03 \x01(\tR\x06branch\x12\x1f\n" +
+	"\vbase_branch\x18\x04 \x01(\tR\n" +
+	"baseBranch\x12\x1d\n" +
+	"\n" +
+	"commit_sha\x18\x05 \x01(\tR\tcommitSha\x124\n" +
+	"\x16accept_pipeline_change\x18\x06 \x01(\bR\x14acceptPipelineChange\"\x9e\x02\n" +
+	"\x13VerifyLocalResponse\x12\x19\n" +
+	"\bbuild_id\x18\x01 \x01(\tR\abuildId\x12@\n" +
+	"\rdigest_status\x18\x02 \x01(\x0e2\x1b.ci.v1.PipelineDigestStatusR\fdigestStatus\x12#\n" +
+	"\rpinned_digest\x18\x03 \x01(\tR\fpinnedDigest\x12%\n" +
+	"\x0ecurrent_digest\x18\x04 \x01(\tR\rcurrentDigest\x12#\n" +
+	"\rpipeline_diff\x18\x05 \x01(\tR\fpipelineDiff\x12#\n" +
+	"\rpipeline_path\x18\x06 \x01(\tR\fpipelinePath\x12\x14\n" +
+	"\x05error\x18\a \x01(\tR\x05error\"\xfa\x01\n" +
+	"\vPipelinePin\x12\x1d\n" +
+	"\n" +
+	"project_id\x18\x01 \x01(\tR\tprojectId\x12\x1b\n" +
+	"\trepo_name\x18\x02 \x01(\tR\brepoName\x12\x16\n" +
+	"\x06digest\x18\x03 \x01(\tR\x06digest\x12#\n" +
+	"\rpipeline_path\x18\x04 \x01(\tR\fpipelinePath\x129\n" +
+	"\n" +
+	"first_seen\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\tfirstSeen\x127\n" +
+	"\tlast_seen\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\blastSeen\"\x19\n" +
+	"\x17ListPipelinePinsRequest\"B\n" +
+	"\x18ListPipelinePinsResponse\x12&\n" +
+	"\x04pins\x18\x01 \x03(\v2\x12.ci.v1.PipelinePinR\x04pins\"5\n" +
+	"\x14UnpinPipelineRequest\x12\x1d\n" +
+	"\n" +
+	"project_id\x18\x01 \x01(\tR\tprojectId\"1\n" +
+	"\x15UnpinPipelineResponse\x12\x18\n" +
+	"\aremoved\x18\x01 \x01(\bR\aremoved*\xc9\x01\n" +
+	"\x14PipelineDigestStatus\x12&\n" +
+	"\"PIPELINE_DIGEST_STATUS_UNSPECIFIED\x10\x00\x12\x1d\n" +
+	"\x19PIPELINE_DIGEST_STATUS_OK\x10\x01\x12!\n" +
+	"\x1dPIPELINE_DIGEST_STATUS_PINNED\x10\x02\x12\"\n" +
+	"\x1ePIPELINE_DIGEST_STATUS_CHANGED\x10\x03\x12#\n" +
+	"\x1fPIPELINE_DIGEST_STATUS_ACCEPTED\x10\x042\x87\x05\n" +
 	"\x10SchedulerService\x12D\n" +
 	"\vSubmitBuild\x12\x19.ci.v1.SubmitBuildRequest\x1a\x1a.ci.v1.SubmitBuildResponse\x12D\n" +
 	"\vCancelBuild\x12\x19.ci.v1.CancelBuildRequest\x1a\x1a.ci.v1.CancelBuildResponse\x12A\n" +
@@ -1118,7 +1728,10 @@ const file_ci_v1_scheduler_proto_rawDesc = "" +
 	"\n" +
 	"ListBuilds\x12\x18.ci.v1.ListBuildsRequest\x1a\x19.ci.v1.ListBuildsResponse\x12;\n" +
 	"\n" +
-	"WatchBuild\x12\x18.ci.v1.WatchBuildRequest\x1a\x11.ci.v1.BuildEvent0\x01B'Z%github.com/ci-system/proto/ci/v1;civ1b\x06proto3"
+	"WatchBuild\x12\x18.ci.v1.WatchBuildRequest\x1a\x11.ci.v1.BuildEvent0\x01\x12F\n" +
+	"\vVerifyLocal\x12\x19.ci.v1.VerifyLocalRequest\x1a\x1a.ci.v1.VerifyLocalResponse(\x01\x12S\n" +
+	"\x10ListPipelinePins\x12\x1e.ci.v1.ListPipelinePinsRequest\x1a\x1f.ci.v1.ListPipelinePinsResponse\x12J\n" +
+	"\rUnpinPipeline\x12\x1b.ci.v1.UnpinPipelineRequest\x1a\x1c.ci.v1.UnpinPipelineResponseB'Z%github.com/ci-system/proto/ci/v1;civ1b\x06proto3"
 
 var (
 	file_ci_v1_scheduler_proto_rawDescOnce sync.Once
@@ -1132,90 +1745,111 @@ func file_ci_v1_scheduler_proto_rawDescGZIP() []byte {
 	return file_ci_v1_scheduler_proto_rawDescData
 }
 
-var file_ci_v1_scheduler_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
+var file_ci_v1_scheduler_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_ci_v1_scheduler_proto_msgTypes = make([]protoimpl.MessageInfo, 25)
 var file_ci_v1_scheduler_proto_goTypes = []any{
-	(*SubmitBuildRequest)(nil),    // 0: ci.v1.SubmitBuildRequest
-	(*SubmitBuildResponse)(nil),   // 1: ci.v1.SubmitBuildResponse
-	(*CancelBuildRequest)(nil),    // 2: ci.v1.CancelBuildRequest
-	(*CancelBuildResponse)(nil),   // 3: ci.v1.CancelBuildResponse
-	(*RetryBuildRequest)(nil),     // 4: ci.v1.RetryBuildRequest
-	(*RetryBuildResponse)(nil),    // 5: ci.v1.RetryBuildResponse
-	(*GetBuildRequest)(nil),       // 6: ci.v1.GetBuildRequest
-	(*GetBuildResponse)(nil),      // 7: ci.v1.GetBuildResponse
-	(*Build)(nil),                 // 8: ci.v1.Build
-	(*Task)(nil),                  // 9: ci.v1.Task
-	(*ListBuildsRequest)(nil),     // 10: ci.v1.ListBuildsRequest
-	(*ListBuildsResponse)(nil),    // 11: ci.v1.ListBuildsResponse
-	(*WatchBuildRequest)(nil),     // 12: ci.v1.WatchBuildRequest
-	(*BuildEvent)(nil),            // 13: ci.v1.BuildEvent
-	(*BuildStateChanged)(nil),     // 14: ci.v1.BuildStateChanged
-	(*TaskStateChanged)(nil),      // 15: ci.v1.TaskStateChanged
-	nil,                           // 16: ci.v1.SubmitBuildRequest.EnvEntry
-	(*GitSource)(nil),             // 17: ci.v1.GitSource
-	(*Labels)(nil),                // 18: ci.v1.Labels
-	(*BuildID)(nil),               // 19: ci.v1.BuildID
-	(BuildState)(0),               // 20: ci.v1.BuildState
-	(*timestamppb.Timestamp)(nil), // 21: google.protobuf.Timestamp
-	(*TaskID)(nil),                // 22: ci.v1.TaskID
-	(TaskState)(0),                // 23: ci.v1.TaskState
-	(*ResourceRequirements)(nil),  // 24: ci.v1.ResourceRequirements
-	(*WorkerID)(nil),              // 25: ci.v1.WorkerID
-	(*TaskResult)(nil),            // 26: ci.v1.TaskResult
+	(PipelineDigestStatus)(0),        // 0: ci.v1.PipelineDigestStatus
+	(*SubmitBuildRequest)(nil),       // 1: ci.v1.SubmitBuildRequest
+	(*SubmitBuildResponse)(nil),      // 2: ci.v1.SubmitBuildResponse
+	(*CancelBuildRequest)(nil),       // 3: ci.v1.CancelBuildRequest
+	(*CancelBuildResponse)(nil),      // 4: ci.v1.CancelBuildResponse
+	(*RetryBuildRequest)(nil),        // 5: ci.v1.RetryBuildRequest
+	(*RetryBuildResponse)(nil),       // 6: ci.v1.RetryBuildResponse
+	(*GetBuildRequest)(nil),          // 7: ci.v1.GetBuildRequest
+	(*GetBuildResponse)(nil),         // 8: ci.v1.GetBuildResponse
+	(*Build)(nil),                    // 9: ci.v1.Build
+	(*Task)(nil),                     // 10: ci.v1.Task
+	(*ListBuildsRequest)(nil),        // 11: ci.v1.ListBuildsRequest
+	(*ListBuildsResponse)(nil),       // 12: ci.v1.ListBuildsResponse
+	(*WatchBuildRequest)(nil),        // 13: ci.v1.WatchBuildRequest
+	(*BuildEvent)(nil),               // 14: ci.v1.BuildEvent
+	(*BuildStateChanged)(nil),        // 15: ci.v1.BuildStateChanged
+	(*TaskStateChanged)(nil),         // 16: ci.v1.TaskStateChanged
+	(*VerifyLocalRequest)(nil),       // 17: ci.v1.VerifyLocalRequest
+	(*VerifyLocalHeader)(nil),        // 18: ci.v1.VerifyLocalHeader
+	(*VerifyLocalResponse)(nil),      // 19: ci.v1.VerifyLocalResponse
+	(*PipelinePin)(nil),              // 20: ci.v1.PipelinePin
+	(*ListPipelinePinsRequest)(nil),  // 21: ci.v1.ListPipelinePinsRequest
+	(*ListPipelinePinsResponse)(nil), // 22: ci.v1.ListPipelinePinsResponse
+	(*UnpinPipelineRequest)(nil),     // 23: ci.v1.UnpinPipelineRequest
+	(*UnpinPipelineResponse)(nil),    // 24: ci.v1.UnpinPipelineResponse
+	nil,                              // 25: ci.v1.SubmitBuildRequest.EnvEntry
+	(*GitSource)(nil),                // 26: ci.v1.GitSource
+	(*Labels)(nil),                   // 27: ci.v1.Labels
+	(*BuildID)(nil),                  // 28: ci.v1.BuildID
+	(BuildState)(0),                  // 29: ci.v1.BuildState
+	(*timestamppb.Timestamp)(nil),    // 30: google.protobuf.Timestamp
+	(*TaskID)(nil),                   // 31: ci.v1.TaskID
+	(TaskState)(0),                   // 32: ci.v1.TaskState
+	(*ResourceRequirements)(nil),     // 33: ci.v1.ResourceRequirements
+	(*WorkerID)(nil),                 // 34: ci.v1.WorkerID
+	(*TaskResult)(nil),               // 35: ci.v1.TaskResult
 }
 var file_ci_v1_scheduler_proto_depIdxs = []int32{
-	17, // 0: ci.v1.SubmitBuildRequest.source:type_name -> ci.v1.GitSource
-	16, // 1: ci.v1.SubmitBuildRequest.env:type_name -> ci.v1.SubmitBuildRequest.EnvEntry
-	18, // 2: ci.v1.SubmitBuildRequest.labels:type_name -> ci.v1.Labels
-	19, // 3: ci.v1.SubmitBuildResponse.build_id:type_name -> ci.v1.BuildID
-	19, // 4: ci.v1.CancelBuildRequest.build_id:type_name -> ci.v1.BuildID
-	19, // 5: ci.v1.RetryBuildRequest.build_id:type_name -> ci.v1.BuildID
-	19, // 6: ci.v1.RetryBuildResponse.build_id:type_name -> ci.v1.BuildID
-	19, // 7: ci.v1.GetBuildRequest.build_id:type_name -> ci.v1.BuildID
-	8,  // 8: ci.v1.GetBuildResponse.build:type_name -> ci.v1.Build
-	19, // 9: ci.v1.Build.build_id:type_name -> ci.v1.BuildID
-	17, // 10: ci.v1.Build.source:type_name -> ci.v1.GitSource
-	20, // 11: ci.v1.Build.state:type_name -> ci.v1.BuildState
-	9,  // 12: ci.v1.Build.tasks:type_name -> ci.v1.Task
-	21, // 13: ci.v1.Build.created_at:type_name -> google.protobuf.Timestamp
-	21, // 14: ci.v1.Build.started_at:type_name -> google.protobuf.Timestamp
-	21, // 15: ci.v1.Build.finished_at:type_name -> google.protobuf.Timestamp
-	18, // 16: ci.v1.Build.labels:type_name -> ci.v1.Labels
-	22, // 17: ci.v1.Task.task_id:type_name -> ci.v1.TaskID
-	23, // 18: ci.v1.Task.state:type_name -> ci.v1.TaskState
-	22, // 19: ci.v1.Task.depends_on:type_name -> ci.v1.TaskID
-	24, // 20: ci.v1.Task.resources:type_name -> ci.v1.ResourceRequirements
-	25, // 21: ci.v1.Task.assigned_worker:type_name -> ci.v1.WorkerID
-	26, // 22: ci.v1.Task.result:type_name -> ci.v1.TaskResult
-	20, // 23: ci.v1.ListBuildsRequest.state:type_name -> ci.v1.BuildState
-	8,  // 24: ci.v1.ListBuildsResponse.builds:type_name -> ci.v1.Build
-	19, // 25: ci.v1.WatchBuildRequest.build_id:type_name -> ci.v1.BuildID
-	19, // 26: ci.v1.BuildEvent.build_id:type_name -> ci.v1.BuildID
-	21, // 27: ci.v1.BuildEvent.timestamp:type_name -> google.protobuf.Timestamp
-	14, // 28: ci.v1.BuildEvent.build_state_changed:type_name -> ci.v1.BuildStateChanged
-	15, // 29: ci.v1.BuildEvent.task_state_changed:type_name -> ci.v1.TaskStateChanged
-	20, // 30: ci.v1.BuildStateChanged.previous:type_name -> ci.v1.BuildState
-	20, // 31: ci.v1.BuildStateChanged.current:type_name -> ci.v1.BuildState
-	22, // 32: ci.v1.TaskStateChanged.task_id:type_name -> ci.v1.TaskID
-	23, // 33: ci.v1.TaskStateChanged.previous:type_name -> ci.v1.TaskState
-	23, // 34: ci.v1.TaskStateChanged.current:type_name -> ci.v1.TaskState
-	26, // 35: ci.v1.TaskStateChanged.result:type_name -> ci.v1.TaskResult
-	0,  // 36: ci.v1.SchedulerService.SubmitBuild:input_type -> ci.v1.SubmitBuildRequest
-	2,  // 37: ci.v1.SchedulerService.CancelBuild:input_type -> ci.v1.CancelBuildRequest
-	4,  // 38: ci.v1.SchedulerService.RetryBuild:input_type -> ci.v1.RetryBuildRequest
-	6,  // 39: ci.v1.SchedulerService.GetBuild:input_type -> ci.v1.GetBuildRequest
-	10, // 40: ci.v1.SchedulerService.ListBuilds:input_type -> ci.v1.ListBuildsRequest
-	12, // 41: ci.v1.SchedulerService.WatchBuild:input_type -> ci.v1.WatchBuildRequest
-	1,  // 42: ci.v1.SchedulerService.SubmitBuild:output_type -> ci.v1.SubmitBuildResponse
-	3,  // 43: ci.v1.SchedulerService.CancelBuild:output_type -> ci.v1.CancelBuildResponse
-	5,  // 44: ci.v1.SchedulerService.RetryBuild:output_type -> ci.v1.RetryBuildResponse
-	7,  // 45: ci.v1.SchedulerService.GetBuild:output_type -> ci.v1.GetBuildResponse
-	11, // 46: ci.v1.SchedulerService.ListBuilds:output_type -> ci.v1.ListBuildsResponse
-	13, // 47: ci.v1.SchedulerService.WatchBuild:output_type -> ci.v1.BuildEvent
-	42, // [42:48] is the sub-list for method output_type
-	36, // [36:42] is the sub-list for method input_type
-	36, // [36:36] is the sub-list for extension type_name
-	36, // [36:36] is the sub-list for extension extendee
-	0,  // [0:36] is the sub-list for field type_name
+	26, // 0: ci.v1.SubmitBuildRequest.source:type_name -> ci.v1.GitSource
+	25, // 1: ci.v1.SubmitBuildRequest.env:type_name -> ci.v1.SubmitBuildRequest.EnvEntry
+	27, // 2: ci.v1.SubmitBuildRequest.labels:type_name -> ci.v1.Labels
+	28, // 3: ci.v1.SubmitBuildResponse.build_id:type_name -> ci.v1.BuildID
+	28, // 4: ci.v1.CancelBuildRequest.build_id:type_name -> ci.v1.BuildID
+	28, // 5: ci.v1.RetryBuildRequest.build_id:type_name -> ci.v1.BuildID
+	28, // 6: ci.v1.RetryBuildResponse.build_id:type_name -> ci.v1.BuildID
+	28, // 7: ci.v1.GetBuildRequest.build_id:type_name -> ci.v1.BuildID
+	9,  // 8: ci.v1.GetBuildResponse.build:type_name -> ci.v1.Build
+	28, // 9: ci.v1.Build.build_id:type_name -> ci.v1.BuildID
+	26, // 10: ci.v1.Build.source:type_name -> ci.v1.GitSource
+	29, // 11: ci.v1.Build.state:type_name -> ci.v1.BuildState
+	10, // 12: ci.v1.Build.tasks:type_name -> ci.v1.Task
+	30, // 13: ci.v1.Build.created_at:type_name -> google.protobuf.Timestamp
+	30, // 14: ci.v1.Build.started_at:type_name -> google.protobuf.Timestamp
+	30, // 15: ci.v1.Build.finished_at:type_name -> google.protobuf.Timestamp
+	27, // 16: ci.v1.Build.labels:type_name -> ci.v1.Labels
+	31, // 17: ci.v1.Task.task_id:type_name -> ci.v1.TaskID
+	32, // 18: ci.v1.Task.state:type_name -> ci.v1.TaskState
+	31, // 19: ci.v1.Task.depends_on:type_name -> ci.v1.TaskID
+	33, // 20: ci.v1.Task.resources:type_name -> ci.v1.ResourceRequirements
+	34, // 21: ci.v1.Task.assigned_worker:type_name -> ci.v1.WorkerID
+	35, // 22: ci.v1.Task.result:type_name -> ci.v1.TaskResult
+	29, // 23: ci.v1.ListBuildsRequest.state:type_name -> ci.v1.BuildState
+	9,  // 24: ci.v1.ListBuildsResponse.builds:type_name -> ci.v1.Build
+	28, // 25: ci.v1.WatchBuildRequest.build_id:type_name -> ci.v1.BuildID
+	28, // 26: ci.v1.BuildEvent.build_id:type_name -> ci.v1.BuildID
+	30, // 27: ci.v1.BuildEvent.timestamp:type_name -> google.protobuf.Timestamp
+	15, // 28: ci.v1.BuildEvent.build_state_changed:type_name -> ci.v1.BuildStateChanged
+	16, // 29: ci.v1.BuildEvent.task_state_changed:type_name -> ci.v1.TaskStateChanged
+	29, // 30: ci.v1.BuildStateChanged.previous:type_name -> ci.v1.BuildState
+	29, // 31: ci.v1.BuildStateChanged.current:type_name -> ci.v1.BuildState
+	31, // 32: ci.v1.TaskStateChanged.task_id:type_name -> ci.v1.TaskID
+	32, // 33: ci.v1.TaskStateChanged.previous:type_name -> ci.v1.TaskState
+	32, // 34: ci.v1.TaskStateChanged.current:type_name -> ci.v1.TaskState
+	35, // 35: ci.v1.TaskStateChanged.result:type_name -> ci.v1.TaskResult
+	18, // 36: ci.v1.VerifyLocalRequest.header:type_name -> ci.v1.VerifyLocalHeader
+	0,  // 37: ci.v1.VerifyLocalResponse.digest_status:type_name -> ci.v1.PipelineDigestStatus
+	30, // 38: ci.v1.PipelinePin.first_seen:type_name -> google.protobuf.Timestamp
+	30, // 39: ci.v1.PipelinePin.last_seen:type_name -> google.protobuf.Timestamp
+	20, // 40: ci.v1.ListPipelinePinsResponse.pins:type_name -> ci.v1.PipelinePin
+	1,  // 41: ci.v1.SchedulerService.SubmitBuild:input_type -> ci.v1.SubmitBuildRequest
+	3,  // 42: ci.v1.SchedulerService.CancelBuild:input_type -> ci.v1.CancelBuildRequest
+	5,  // 43: ci.v1.SchedulerService.RetryBuild:input_type -> ci.v1.RetryBuildRequest
+	7,  // 44: ci.v1.SchedulerService.GetBuild:input_type -> ci.v1.GetBuildRequest
+	11, // 45: ci.v1.SchedulerService.ListBuilds:input_type -> ci.v1.ListBuildsRequest
+	13, // 46: ci.v1.SchedulerService.WatchBuild:input_type -> ci.v1.WatchBuildRequest
+	17, // 47: ci.v1.SchedulerService.VerifyLocal:input_type -> ci.v1.VerifyLocalRequest
+	21, // 48: ci.v1.SchedulerService.ListPipelinePins:input_type -> ci.v1.ListPipelinePinsRequest
+	23, // 49: ci.v1.SchedulerService.UnpinPipeline:input_type -> ci.v1.UnpinPipelineRequest
+	2,  // 50: ci.v1.SchedulerService.SubmitBuild:output_type -> ci.v1.SubmitBuildResponse
+	4,  // 51: ci.v1.SchedulerService.CancelBuild:output_type -> ci.v1.CancelBuildResponse
+	6,  // 52: ci.v1.SchedulerService.RetryBuild:output_type -> ci.v1.RetryBuildResponse
+	8,  // 53: ci.v1.SchedulerService.GetBuild:output_type -> ci.v1.GetBuildResponse
+	12, // 54: ci.v1.SchedulerService.ListBuilds:output_type -> ci.v1.ListBuildsResponse
+	14, // 55: ci.v1.SchedulerService.WatchBuild:output_type -> ci.v1.BuildEvent
+	19, // 56: ci.v1.SchedulerService.VerifyLocal:output_type -> ci.v1.VerifyLocalResponse
+	22, // 57: ci.v1.SchedulerService.ListPipelinePins:output_type -> ci.v1.ListPipelinePinsResponse
+	24, // 58: ci.v1.SchedulerService.UnpinPipeline:output_type -> ci.v1.UnpinPipelineResponse
+	50, // [50:59] is the sub-list for method output_type
+	41, // [41:50] is the sub-list for method input_type
+	41, // [41:41] is the sub-list for extension type_name
+	41, // [41:41] is the sub-list for extension extendee
+	0,  // [0:41] is the sub-list for field type_name
 }
 
 func init() { file_ci_v1_scheduler_proto_init() }
@@ -1228,18 +1862,23 @@ func file_ci_v1_scheduler_proto_init() {
 		(*BuildEvent_BuildStateChanged)(nil),
 		(*BuildEvent_TaskStateChanged)(nil),
 	}
+	file_ci_v1_scheduler_proto_msgTypes[16].OneofWrappers = []any{
+		(*VerifyLocalRequest_Header)(nil),
+		(*VerifyLocalRequest_Chunk)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_ci_v1_scheduler_proto_rawDesc), len(file_ci_v1_scheduler_proto_rawDesc)),
-			NumEnums:      0,
-			NumMessages:   17,
+			NumEnums:      1,
+			NumMessages:   25,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
 		GoTypes:           file_ci_v1_scheduler_proto_goTypes,
 		DependencyIndexes: file_ci_v1_scheduler_proto_depIdxs,
+		EnumInfos:         file_ci_v1_scheduler_proto_enumTypes,
 		MessageInfos:      file_ci_v1_scheduler_proto_msgTypes,
 	}.Build()
 	File_ci_v1_scheduler_proto = out.File

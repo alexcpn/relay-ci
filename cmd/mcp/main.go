@@ -236,15 +236,19 @@ func (s *mcpServer) handleToolsList(req jsonRPCRequest) *jsonRPCResponse {
 		},
 		{
 			Name:        "submit_build",
-			Description: "Submit a new CI build for a git repository. Triggers the pipeline defined in the repo's pipeline.yaml. Use this to re-run builds after pushing fixes.",
+			Description: "Submit a new CI build for a git repository or local checkout. Accepts repo_url, or repo_path / file:// URI for a local folder. Triggers the pipeline defined in the repo's pipeline.yaml.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
-					"repo_url": {"type": "string", "description": "Git repository URL (e.g. https://github.com/org/repo.git)"},
+					"repo_url": {"type": "string", "description": "Git repository URL or file:// URI"},
+					"repo_path": {"type": "string", "description": "Local filesystem path to a git checkout; normalized to a file:// URI"},
 					"branch": {"type": "string", "description": "Branch to build (default: main)"},
 					"commit_sha": {"type": "string", "description": "Specific commit SHA to build (default: HEAD)"}
 				},
-				"required": ["repo_url"]
+				"anyOf": [
+					{"required": ["repo_url"]},
+					{"required": ["repo_path"]}
+				]
 			}`),
 		},
 		{
@@ -380,5 +384,3 @@ func errorResult(text string) *mcpToolResult {
 		IsError: true,
 	}
 }
-
-

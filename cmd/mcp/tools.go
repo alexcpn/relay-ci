@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -300,12 +303,14 @@ func (s *mcpServer) toolDiagnoseBuild(ctx context.Context, args json.RawMessage)
 func (s *mcpServer) toolSubmitBuild(ctx context.Context, args json.RawMessage) *mcpToolResult {
 	var params struct {
 		RepoURL   string `json:"repo_url"`
+		RepoPath  string `json:"repo_path"`
 		Branch    string `json:"branch"`
 		CommitSHA string `json:"commit_sha"`
 	}
 	json.Unmarshal(args, &params)
-	if params.RepoURL == "" {
-		return errorResult("repo_url is required")
+	repoRef, err := normalizeRepoReference(params.RepoURL, params.RepoPath)
+	if err != nil {
+		return errorResult(err.Error())
 	}
 	if params.Branch == "" {
 		params.Branch = "main"
@@ -316,7 +321,7 @@ func (s *mcpServer) toolSubmitBuild(ctx context.Context, args json.RawMessage) *
 
 	resp, err := s.scheduler.SubmitBuild(ctx, &pb.SubmitBuildRequest{
 		Source: &pb.GitSource{
-			RepoUrl:   params.RepoURL,
+			RepoUrl:   repoRef,
 			CommitSha: params.CommitSHA,
 			Branch:    params.Branch,
 		},
@@ -327,6 +332,33 @@ func (s *mcpServer) toolSubmitBuild(ctx context.Context, args json.RawMessage) *
 	}
 
 	return textResult(fmt.Sprintf("Build submitted successfully.\n\n**Build ID:** %s\n\nUse `get_build` or `watch_build` to monitor progress.", resp.BuildId.Id))
+}
+
+func normalizeRepoReference(repoURL, repoPath string) (string, error) {
+	if repoPath != "" {
+		return localPathToFileURI(repoPath)
+	}
+	if repoURL == "" {
+		return "", fmt.Errorf("repo_url or repo_path is required")
+	}
+	if strings.HasPrefix(repoURL, "file://") {
+		return repoURL, nil
+	}
+	if strings.Contains(repoURL, "://") {
+		return repoURL, nil
+	}
+	if info, err := os.Stat(repoURL); err == nil && info.IsDir() {
+		return localPathToFileURI(repoURL)
+	}
+	return repoURL, nil
+}
+
+func localPathToFileURI(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resolving repo path %q: %w", path, err)
+	}
+	return (&url.URL{Scheme: "file", Path: filepath.ToSlash(abs)}).String(), nil
 }
 
 func (s *mcpServer) toolCancelBuild(ctx context.Context, args json.RawMessage) *mcpToolResult {
@@ -681,4 +713,3 @@ func containsAny(s string, substrs ...string) bool {
 	}
 	return false
 }
-

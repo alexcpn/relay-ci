@@ -1,0 +1,89 @@
+# pipeline.yaml — copy this into the root of a Wails + Go app.
+# It keeps the CI shape simple: clone, vet, test, lint, then smoke-build the desktop app.
+
+name: my-wails-app
+
+defaults:
+  image: golang:1.24
+  env:
+    CI: "true"
+    CGO_ENABLED: "1"
+  cpu: 1000
+  memory_mb: 1024
+  disk_mb: 4000
+  timeout: 900
+
+triggers:
+  branches: [main]
+  pull_requests: true
+  paths:
+    - "**/*.go"
+    - "**/*.ts"
+    - "**/*.js"
+    - "frontend/**"
+    - "build/**"
+    - "wails.json"
+    - "go.mod"
+    - "go.sum"
+
+tasks:
+  - id: clone
+    image: alpine/git:latest
+    commands:
+      - git config --global --add safe.directory /relay-local-repo/.git
+      - git config --global --add safe.directory /relay-local-repo
+      - git clone --depth=1 $REPO_URL /workspace
+      - cd /workspace && git checkout $COMMIT_SHA
+
+  - id: vet
+    commands:
+      - go vet ./...
+    depends_on: [clone]
+    cache:
+      - key: gomod
+        path: /go/pkg/mod
+
+  - id: test
+    commands:
+      - go test -race -coverprofile=coverage.out ./...
+    depends_on: [clone]
+    cache:
+      - key: gomod
+        path: /go/pkg/mod
+        readonly: true
+    artifacts:
+      - name: coverage
+        path: coverage.out
+
+  - id: lint
+    image: golangci/golangci-lint:latest
+    commands:
+      - golangci-lint run --timeout=5m
+    depends_on: [clone]
+    cache:
+      - key: gomod
+        path: /go/pkg/mod
+      - key: golangci-lint-cache
+        path: /root/.cache/golangci-lint
+    memory_mb: 2048
+
+  - id: wails-build
+    commands:
+      - apt-get update -qq && apt-get install -y -qq nodejs npm gcc pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev
+      - go install github.com/wailsapp/wails/v2/cmd/wails@latest
+      - wails build -tags webkit2_41
+    depends_on: [vet, test, lint]
+    cache:
+      - key: gomod
+        path: /go/pkg/mod
+      - key: gopath-bin
+        path: /go/bin
+
+integrations:
+  code_review:
+    enabled: true
+    provider: anthropic
+    api_key_secret: ANTHROPIC_API_KEY
+    base_branch: main
+    reviewer_prompt: code-reviewer.md
+    fail_on_critical: true

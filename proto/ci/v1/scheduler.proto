@@ -28,6 +28,20 @@ service SchedulerService {
 
   // Stream build state changes in real time.
   rpc WatchBuild(WatchBuildRequest) returns (stream BuildEvent);
+
+  // VerifyLocal accepts a git bundle of a local feature branch, pins/checks
+  // the pipeline.yaml digest (TOFU), then submits a build using the existing
+  // pipeline machinery. The CLI streams the bundle bytes after the header.
+  // Returns the build_id once accepted, or a digest mismatch reason.
+  rpc VerifyLocal(stream VerifyLocalRequest) returns (VerifyLocalResponse);
+
+  // ListPipelinePins returns all currently pinned pipeline digests, keyed by
+  // the project's root commit SHA.
+  rpc ListPipelinePins(ListPipelinePinsRequest) returns (ListPipelinePinsResponse);
+
+  // UnpinPipeline removes a pinned pipeline digest so the next verify will
+  // re-pin from scratch.
+  rpc UnpinPipeline(UnpinPipelineRequest) returns (UnpinPipelineResponse);
 }
 
 // --- Submit ---
@@ -140,4 +154,65 @@ message TaskStateChanged {
   TaskState previous = 3;
   TaskState current = 4;
   TaskResult result = 5; // set when terminal state
+}
+
+// --- VerifyLocal ---
+
+message VerifyLocalRequest {
+  oneof payload {
+    VerifyLocalHeader header = 1;
+    bytes chunk = 2; // git bundle bytes
+  }
+}
+
+message VerifyLocalHeader {
+  string project_id = 1;             // sha1 of the repo's root commit
+  string repo_name = 2;              // human label, e.g. basename of repo path
+  string branch = 3;                 // branch to verify
+  string base_branch = 4;            // diff target / pipeline source
+  string commit_sha = 5;             // tip of branch
+  bool accept_pipeline_change = 6;   // re-pin if digest differs
+}
+
+enum PipelineDigestStatus {
+  PIPELINE_DIGEST_STATUS_UNSPECIFIED = 0;
+  PIPELINE_DIGEST_STATUS_OK = 1;        // matched existing pin
+  PIPELINE_DIGEST_STATUS_PINNED = 2;    // first-time pin recorded
+  PIPELINE_DIGEST_STATUS_CHANGED = 3;   // mismatch — build refused
+  PIPELINE_DIGEST_STATUS_ACCEPTED = 4;  // mismatch but caller accepted
+}
+
+message VerifyLocalResponse {
+  string build_id = 1;
+  PipelineDigestStatus digest_status = 2;
+  string pinned_digest = 3;
+  string current_digest = 4;
+  string pipeline_diff = 5;     // unified diff old → new (set when changed)
+  string pipeline_path = 6;     // pipeline.yml or pipeline.yaml
+  string error = 7;
+}
+
+// --- Pipeline pins ---
+
+message PipelinePin {
+  string project_id = 1;
+  string repo_name = 2;
+  string digest = 3;
+  string pipeline_path = 4;
+  google.protobuf.Timestamp first_seen = 5;
+  google.protobuf.Timestamp last_seen = 6;
+}
+
+message ListPipelinePinsRequest {}
+
+message ListPipelinePinsResponse {
+  repeated PipelinePin pins = 1;
+}
+
+message UnpinPipelineRequest {
+  string project_id = 1;
+}
+
+message UnpinPipelineResponse {
+  bool removed = 1;
 }

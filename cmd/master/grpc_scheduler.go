@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,10 +28,11 @@ type schedulerServer struct {
 	pb.UnimplementedSchedulerServiceServer
 	sched     *scheduler.Scheduler
 	scmRouter *scm.Router
+	verify    *verifyServer // nil if local verify is disabled
 }
 
-func newSchedulerServer(sched *scheduler.Scheduler, scmRouter *scm.Router) *schedulerServer {
-	return &schedulerServer{sched: sched, scmRouter: scmRouter}
+func newSchedulerServer(sched *scheduler.Scheduler, scmRouter *scm.Router, verify *verifyServer) *schedulerServer {
+	return &schedulerServer{sched: sched, scmRouter: scmRouter, verify: verify}
 }
 
 func (s *schedulerServer) SubmitBuild(ctx context.Context, req *pb.SubmitBuildRequest) (*pb.SubmitBuildResponse, error) {
@@ -49,10 +51,15 @@ func (s *schedulerServer) SubmitBuild(ctx context.Context, req *pb.SubmitBuildRe
 	// Inject build-level env vars into every task so commands like
 	// "git clone $REPO_URL" and "git checkout $COMMIT_SHA" work.
 	buildEnv := map[string]string{
-		"REPO_URL":   req.Source.RepoUrl,
 		"BRANCH":     req.Source.Branch,
 		"COMMIT_SHA": req.Source.CommitSha,
 		"PR_NUMBER":  req.Source.PrNumber,
+	}
+	if localRepoPath, ok := localRepoHostPath(req.Source.RepoUrl); ok {
+		buildEnv["REPO_URL"] = "/relay-local-repo"
+		buildEnv["RELAY_LOCAL_REPO_PATH"] = localRepoPath
+	} else {
+		buildEnv["REPO_URL"] = req.Source.RepoUrl
 	}
 	for _, task := range g.Tasks() {
 		if task.Env == nil {
@@ -138,6 +145,24 @@ func fetchAndBuildGraph(ctx context.Context, src *pb.GitSource) (*dag.Graph, err
 	}
 
 	return pipeline.BuildGraph(cfg)
+}
+
+func localRepoHostPath(repoURL string) (string, bool) {
+	if strings.HasPrefix(repoURL, "file://") {
+		u, err := url.Parse(repoURL)
+		if err != nil || u.Path == "" {
+			return "", false
+		}
+		return filepath.Clean(u.Path), true
+	}
+
+	if filepath.IsAbs(repoURL) {
+		if _, err := os.Stat(repoURL); err == nil {
+			return filepath.Clean(repoURL), true
+		}
+	}
+
+	return "", false
 }
 
 func (s *schedulerServer) CancelBuild(ctx context.Context, req *pb.CancelBuildRequest) (*pb.CancelBuildResponse, error) {

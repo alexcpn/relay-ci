@@ -1,15 +1,19 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"text/tabwriter"
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	pb "github.com/ci-system/ci/gen/ci/v1"
 	"github.com/ci-system/ci/pkg/auth"
@@ -46,6 +50,8 @@ func main() {
 	switch os.Args[1] {
 	case "submit":
 		cmdSubmit(ctx, conn)
+	case "verify":
+		cmdVerify(conn)
 	case "status", "get":
 		cmdStatus(ctx, conn)
 	case "list", "ls":
@@ -58,6 +64,8 @@ func main() {
 		cmdWatch(ctx, conn)
 	case "secret":
 		cmdSecret(ctx, conn)
+	case "pipeline-pin":
+		cmdPipelinePin(ctx, conn)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", os.Args[1])
 		printUsage()
@@ -344,16 +352,294 @@ func cmdSecret(ctx context.Context, conn *grpc.ClientConn) {
 	}
 }
 
+func cmdVerify(conn *grpc.ClientConn) {
+	repoPath := lastPositionalArg()
+	if repoPath == "" {
+		fmt.Fprintln(os.Stderr, "usage: ci verify [--branch <branch>] [--base-branch <branch>] [--accept-pipeline-change] <repo-path>")
+		os.Exit(1)
+	}
+
+	absRepoPath, err := filepath.Abs(repoPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: resolving repo path: %v\n", err)
+		os.Exit(3)
+	}
+
+	projectID, err := gitOutput(absRepoPath, "rev-list", "--max-parents=0", "HEAD")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: reading root commit SHA: %v\n", err)
+		os.Exit(3)
+	}
+	commitSHA, err := gitOutput(absRepoPath, "rev-parse", "HEAD")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: reading HEAD commit SHA: %v\n", err)
+		os.Exit(3)
+	}
+	branch := flagValue("--branch", "")
+	if branch == "" {
+		branch, err = gitOutput(absRepoPath, "rev-parse", "--abbrev-ref", "HEAD")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: reading current branch: %v\n", err)
+			os.Exit(3)
+		}
+	}
+	baseBranch := flagValue("--base-branch", "main")
+	acceptChange := hasFlag("--accept-pipeline-change")
+	repoName := filepath.Base(absRepoPath)
+
+	bundlePath, cleanup, err := createGitBundle(absRepoPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: creating bundle: %v\n", err)
+		os.Exit(3)
+	}
+	defer cleanup()
+
+	client := pb.NewSchedulerServiceClient(conn)
+	stream, err := client.VerifyLocal(context.Background())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: opening verify stream: %v\n", err)
+		os.Exit(3)
+	}
+
+	header := &pb.VerifyLocalHeader{
+		ProjectId:            projectID,
+		RepoName:             repoName,
+		Branch:               branch,
+		BaseBranch:           baseBranch,
+		CommitSha:            commitSHA,
+		AcceptPipelineChange: acceptChange,
+	}
+	if err := stream.Send(&pb.VerifyLocalRequest{Payload: &pb.VerifyLocalRequest_Header{Header: header}}); err != nil {
+		fmt.Fprintf(os.Stderr, "error: sending verify header: %v\n", err)
+		os.Exit(3)
+	}
+
+	if err := sendBundleChunks(stream, bundlePath); err != nil {
+		fmt.Fprintf(os.Stderr, "error: streaming bundle: %v\n", err)
+		os.Exit(3)
+	}
+
+	resp, err := stream.CloseAndRecv()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: receiving verify response: %v\n", err)
+		os.Exit(3)
+	}
+
+	printVerifyResponse(resp)
+	switch resp.DigestStatus {
+	case pb.PipelineDigestStatus_PIPELINE_DIGEST_STATUS_CHANGED:
+		os.Exit(2)
+	case pb.PipelineDigestStatus_PIPELINE_DIGEST_STATUS_PINNED,
+		pb.PipelineDigestStatus_PIPELINE_DIGEST_STATUS_OK,
+		pb.PipelineDigestStatus_PIPELINE_DIGEST_STATUS_ACCEPTED:
+	default:
+		if resp.Error != "" {
+			fmt.Fprintln(os.Stderr, resp.Error)
+		}
+	}
+
+	if resp.BuildId == "" {
+		os.Exit(3)
+	}
+
+	fmt.Printf("verify build submitted: %s\n", resp.BuildId)
+
+	buildCtx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
+	defer cancel()
+	build, err := waitForBuildCompletion(buildCtx, client, resp.BuildId)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: waiting for build completion: %v\n", err)
+		os.Exit(3)
+	}
+
+	fmt.Printf("verify build finished: %s\n", build.State)
+	if build.State != pb.BuildState_BUILD_STATE_PASSED {
+		os.Exit(1)
+	}
+}
+
+func cmdPipelinePin(ctx context.Context, conn *grpc.ClientConn) {
+	if len(os.Args) < 3 {
+		fmt.Fprintln(os.Stderr, "usage: ci pipeline-pin <list|unpin> [project_id]")
+		os.Exit(1)
+	}
+
+	client := pb.NewSchedulerServiceClient(conn)
+	switch os.Args[2] {
+	case "list", "ls":
+		resp, err := client.ListPipelinePins(ctx, &pb.ListPipelinePinsRequest{})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		if len(resp.Pins) == 0 {
+			fmt.Println("No pipeline digests pinned.")
+			return
+		}
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(w, "PROJECT\tDIGEST\tPIPELINE\tFIRST SEEN\tLAST SEEN\tREPO")
+		for _, pin := range resp.Pins {
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
+				pin.ProjectId,
+				pin.Digest,
+				pin.PipelinePath,
+				formatTime(pin.FirstSeen),
+				formatTime(pin.LastSeen),
+				pin.RepoName,
+			)
+		}
+		w.Flush()
+	case "unpin", "rm":
+		if len(os.Args) < 4 {
+			fmt.Fprintln(os.Stderr, "usage: ci pipeline-pin unpin <project_id>")
+			os.Exit(1)
+		}
+		projectID := os.Args[3]
+		resp, err := client.UnpinPipeline(ctx, &pb.UnpinPipelineRequest{ProjectId: projectID})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		if resp.Removed {
+			fmt.Printf("Unpinned %s\n", projectID)
+		} else {
+			fmt.Printf("No pin found for %s\n", projectID)
+		}
+	default:
+		fmt.Fprintf(os.Stderr, "unknown pipeline-pin command: %s\n", os.Args[2])
+		fmt.Fprintln(os.Stderr, "usage: ci pipeline-pin <list|unpin> [project_id]")
+		os.Exit(1)
+	}
+}
+
+func printVerifyResponse(resp *pb.VerifyLocalResponse) {
+	switch resp.DigestStatus {
+	case pb.PipelineDigestStatus_PIPELINE_DIGEST_STATUS_PINNED:
+		fmt.Printf("Pinned pipeline digest %s\n", resp.PinnedDigest)
+	case pb.PipelineDigestStatus_PIPELINE_DIGEST_STATUS_OK:
+		fmt.Printf("Pipeline digest matches pinned value %s\n", resp.PinnedDigest)
+	case pb.PipelineDigestStatus_PIPELINE_DIGEST_STATUS_ACCEPTED:
+		fmt.Printf("PIPELINE CHANGED — accepted and re-pinned\n")
+		fmt.Printf("pinned:  %s\n", resp.PinnedDigest)
+		fmt.Printf("current: %s\n", resp.CurrentDigest)
+		if resp.PipelineDiff != "" {
+			fmt.Println(resp.PipelineDiff)
+		}
+	case pb.PipelineDigestStatus_PIPELINE_DIGEST_STATUS_CHANGED:
+		fmt.Fprintln(os.Stderr, "PIPELINE CHANGED — refusing to run")
+		fmt.Fprintf(os.Stderr, "pinned:  %s\n", resp.PinnedDigest)
+		fmt.Fprintf(os.Stderr, "current: %s\n", resp.CurrentDigest)
+		if resp.PipelineDiff != "" {
+			fmt.Println(resp.PipelineDiff)
+		}
+	default:
+		if resp.Error != "" {
+			fmt.Fprintln(os.Stderr, resp.Error)
+		}
+	}
+}
+
+func waitForBuildCompletion(ctx context.Context, client pb.SchedulerServiceClient, buildID string) (*pb.Build, error) {
+	for {
+		resp, err := client.GetBuild(ctx, &pb.GetBuildRequest{BuildId: &pb.BuildID{Id: buildID}})
+		if err != nil {
+			return nil, err
+		}
+		if resp.Build == nil {
+			return nil, fmt.Errorf("build %s missing from response", buildID)
+		}
+		switch resp.Build.State {
+		case pb.BuildState_BUILD_STATE_PASSED,
+			pb.BuildState_BUILD_STATE_FAILED,
+			pb.BuildState_BUILD_STATE_CANCELLED:
+			return resp.Build, nil
+		default:
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(1 * time.Second):
+			}
+		}
+	}
+}
+
+func sendBundleChunks(stream pb.SchedulerService_VerifyLocalClient, bundlePath string) error {
+	file, err := os.Open(bundlePath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	reader := bufio.NewReader(file)
+	buf := make([]byte, 64*1024)
+	for {
+		n, err := reader.Read(buf)
+		if n > 0 {
+			if sendErr := stream.Send(&pb.VerifyLocalRequest{Payload: &pb.VerifyLocalRequest_Chunk{Chunk: append([]byte(nil), buf[:n]...)}}); sendErr != nil {
+				return sendErr
+			}
+		}
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+	}
+}
+
+func createGitBundle(repoPath string) (string, func(), error) {
+	tmpDir, err := os.MkdirTemp("", "ci-verify-*")
+	if err != nil {
+		return "", func() {}, err
+	}
+	bundlePath := filepath.Join(tmpDir, "verify.bundle")
+	cmd := exec.Command("git", "-C", repoPath, "bundle", "create", bundlePath, "--all")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		_ = os.RemoveAll(tmpDir)
+		return "", func() {}, fmt.Errorf("%w\n%s", err, out)
+	}
+	return bundlePath, func() { _ = os.RemoveAll(tmpDir) }, nil
+}
+
+func gitOutput(repoPath string, args ...string) (string, error) {
+	cmd := exec.Command("git", append([]string{"-C", repoPath}, args...)...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+func formatTime(ts *timestamppb.Timestamp) string {
+	if ts == nil {
+		return ""
+	}
+	return ts.AsTime().Format(time.RFC3339)
+}
+
+func lastPositionalArg() string {
+	for i := len(os.Args) - 1; i >= 2; i-- {
+		if !strings.HasPrefix(os.Args[i], "-") {
+			return os.Args[i]
+		}
+	}
+	return ""
+}
+
 func printUsage() {
 	fmt.Fprintln(os.Stderr, `ci - CI/CD system command line tool
 
 Usage:
   ci submit <repo-url> [--branch <branch>] [--sha <sha>]
+  ci verify [--branch <branch>] [--base-branch <branch>] [--accept-pipeline-change] <repo-path>
   ci status <build-id>
   ci list
   ci cancel <build-id>
   ci logs <build-id> <task-id> [--follow]
   ci watch <build-id>
+  ci pipeline-pin list
+  ci pipeline-pin unpin <project_id>
   ci secret set <name>          store a secret (pipe value via stdin)
   ci secret list                list secret names
   ci secret delete <name>       remove a secret

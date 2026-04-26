@@ -28,6 +28,8 @@ tasks:
   - id: clone
     image: alpine/git:latest
     commands:
+      - git config --global --add safe.directory /relay-local-repo/.git
+      - git config --global --add safe.directory /relay-local-repo
       - git clone --depth=1 $REPO_URL /workspace
       - cd /workspace && git checkout $COMMIT_SHA
 
@@ -110,3 +112,11 @@ integrations:
 
       # - name: semgrep
       # - name: grype
+
+  code_review:
+    enabled: true
+    provider: anthropic
+    api_key_secret: ANTHROPIC_API_KEY
+    base_branch: main
+    reviewer_prompt: code-reviewer.md
+    fail_on_critical: true
