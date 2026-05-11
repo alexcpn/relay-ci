@@ -18,6 +18,7 @@ MASTER_GRPC_ADDR="${MASTER_GRPC_ADDR:-:9090}"
 MASTER_HTTP_ADDR="${MASTER_HTTP_ADDR:-:8080}"
 WORKER_ADDR="${WORKER_ADDR:-:9091}"
 MCP_HTTP_ADDR="${MCP_HTTP_ADDR:-:8081}"
+WEB_ADDR="${WEB_ADDR:-:4200}"
 
 GO="${GO:-$(which go 2>/dev/null || echo /home/alex/go-sdk/go/bin/go)}"
 
@@ -51,7 +52,7 @@ stop_server() {
 }
 
 wait_tcp() {
-    local addr=$1 name=$2 retries=20
+    local addr=$1 name=$2 retries=${3:-20}
     # Strip leading colon so :9090 → localhost:9090
     local host_port="${addr#:}"
     [[ "$host_port" == "$addr" ]] || host_port="localhost:${addr#:}"
@@ -63,6 +64,23 @@ wait_tcp() {
     done
     red "  $name did not become ready at $addr"
     return 1
+}
+
+# stop_web kills the npm/ng-serve process tree. setsid in cmd_start puts the
+# Angular dev server in its own process group so we can kill the whole group
+# with `kill -- -PID` without taking down this script.
+stop_web() {
+    local pf; pf=$(pid_file web)
+    if is_running web; then
+        local pid; pid=$(cat "$pf")
+        kill -TERM -- -"$pid" 2>/dev/null && echo "  stopped web (pid $pid, group)" \
+            || { kill "$pid" 2>/dev/null && echo "  stopped web (pid $pid)"; } \
+            || true
+        rm -f "$pf"
+    else
+        pkill -f "node.*ng[^a-z]+serve" 2>/dev/null && echo "  killed stale web process" || true
+        echo "  web not running"
+    fi
 }
 
 # ── build ─────────────────────────────────────────────────────────────────────
@@ -123,11 +141,29 @@ cmd_start() {
     fi
 
     wait_tcp "$MCP_HTTP_ADDR" mcp
+
+    # --- web (Angular dev server) ---
+    if is_running web; then
+        echo "  web already running (pid $(cat "$(pid_file web)"))"
+    elif [[ ! -d "${SCRIPT_DIR}/web/node_modules" ]]; then
+        red "  web/node_modules missing — run 'make web-install' to enable the UI"
+    else
+        setsid bash -c "cd '${SCRIPT_DIR}/web' && exec npm start -- --port ${WEB_ADDR#:}" \
+            >"$(log_file web)" 2>&1 < /dev/null &
+        echo $! >"$(pid_file web)"
+        echo "  started web (pid $!) addr=${WEB_ADDR}"
+        # ng serve's first compile can take 15–30s; allow up to ~60s.
+        wait_tcp "$WEB_ADDR" web 200 || true
+    fi
+
     green "All servers running."
     echo ""
     echo "  Master gRPC : localhost${MASTER_GRPC_ADDR}"
     echo "  Master HTTP : http://localhost${MASTER_HTTP_ADDR}"
     echo "  MCP HTTP    : http://localhost${MCP_HTTP_ADDR}/mcp"
+    if is_running web; then
+        echo "  Web UI      : http://localhost${WEB_ADDR}"
+    fi
     echo "  Logs        : ${LOG_DIR}/"
 }
 
@@ -135,6 +171,7 @@ cmd_start() {
 
 cmd_stop() {
     bold "Stopping servers..."
+    stop_web
     stop_server mcp
     stop_server worker
     stop_server master
@@ -145,7 +182,7 @@ cmd_stop() {
 
 cmd_status() {
     bold "Server status:"
-    for name in master worker mcp; do
+    for name in master worker mcp web; do
         if is_running "$name"; then
             green "  $name  running (pid $(cat "$(pid_file "$name")"))"
         else
@@ -158,7 +195,7 @@ cmd_status() {
 
 cmd_logs() {
     local targets=()
-    for name in master worker mcp; do
+    for name in master worker mcp web; do
         lf=$(log_file "$name")
         [[ -f "$lf" ]] && targets+=("$lf")
     done
