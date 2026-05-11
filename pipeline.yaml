@@ -6,6 +6,9 @@ defaults:
     CI: "true"
     CGO_ENABLED: "0"
     GOPATH: /go
+    # Local file:// submits bind-mount the host repo, so .git is owned by the
+    # host UID inside containers. Skip VCS stamping rather than fight ownership.
+    GOFLAGS: "-buildvcs=false"
   cpu: 1000
   memory_mb: 512
   timeout: 300
