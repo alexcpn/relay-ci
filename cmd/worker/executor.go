@@ -165,18 +165,17 @@ func (e *executor) runInDocker(ctx context.Context, req *pb.AssignTaskRequest, t
 
 // runInShell runs the task commands directly in a shell (fallback when Docker is unavailable).
 func (e *executor) runInShell(ctx context.Context, req *pb.AssignTaskRequest, taskID, buildID string) (int, error) {
-	shellReq := *req
-	shellReq.Env = make(map[string]string, len(req.Env))
+	env := make(map[string]string, len(req.Env))
 	for k, v := range req.Env {
-		shellReq.Env[k] = v
+		env[k] = v
 	}
-	if bundlePath := shellReq.Env["RELAY_BUNDLE_PATH"]; bundlePath != "" {
+	if bundlePath := env["RELAY_BUNDLE_PATH"]; bundlePath != "" {
 		// Shell fallback runs on the worker host, so use the host path directly.
-		shellReq.Env["REPO_URL"] = bundlePath
+		env["REPO_URL"] = bundlePath
 	}
 
-	cmdStr := strings.Join(shellReq.Commands, " && ")
-	return e.runCommand(ctx, "sh", []string{"-c", cmdStr}, shellReq.Env, taskID, buildID)
+	cmdStr := strings.Join(req.Commands, " && ")
+	return e.runCommand(ctx, "sh", []string{"-c", cmdStr}, env, taskID, buildID)
 }
 
 // dockerRunArgs builds the docker command line for a task.

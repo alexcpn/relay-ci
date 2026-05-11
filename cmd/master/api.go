@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -17,12 +18,23 @@ import (
 // handlers without changing the frontend.
 
 type apiServer struct {
-	sched    *scheduler.Scheduler
-	registry *worker.Registry
+	sched         *scheduler.Scheduler
+	registry      *worker.Registry
+	allowedOrigin string // exact value sent in Access-Control-Allow-Origin
 }
 
 func newAPIServer(sched *scheduler.Scheduler, registry *worker.Registry) *apiServer {
-	return &apiServer{sched: sched, registry: registry}
+	// CORS_ALLOW_ORIGIN: a single allowed origin, or "*" for any. Defaults to
+	// "*" for dev ergonomics; production deployments should pin it.
+	origin := os.Getenv("CORS_ALLOW_ORIGIN")
+	if origin == "" {
+		origin = "*"
+	}
+	return &apiServer{
+		sched:         sched,
+		registry:      registry,
+		allowedOrigin: origin,
+	}
 }
 
 func (a *apiServer) register(mux *http.ServeMux) {
@@ -33,9 +45,10 @@ func (a *apiServer) register(mux *http.ServeMux) {
 
 func (a *apiServer) withCORS(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Origin", a.allowedOrigin)
 		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+		w.Header().Set("Vary", "Origin")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -46,7 +59,7 @@ func (a *apiServer) withCORS(h http.HandlerFunc) http.HandlerFunc {
 
 func (a *apiServer) handleBuilds(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	builds := a.sched.ListBuilds()
@@ -62,18 +75,23 @@ func (a *apiServer) handleBuilds(w http.ResponseWriter, r *http.Request) {
 
 func (a *apiServer) handleBuildDetail(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	id := strings.TrimPrefix(r.URL.Path, "/api/v1/builds/")
-	id = strings.TrimSuffix(id, "/")
-	if id == "" {
-		http.Error(w, "build id required", http.StatusBadRequest)
+	// Path is /api/v1/builds/{id} — anything with a sub-path is not a build.
+	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/builds/")
+	rest = strings.TrimSuffix(rest, "/")
+	if rest == "" {
+		writeJSONError(w, http.StatusBadRequest, "build id required")
 		return
 	}
-	b, ok := a.sched.GetBuild(id)
+	if strings.ContainsRune(rest, '/') {
+		writeJSONError(w, http.StatusNotFound, "not found")
+		return
+	}
+	b, ok := a.sched.GetBuild(rest)
 	if !ok {
-		http.Error(w, "build not found", http.StatusNotFound)
+		writeJSONError(w, http.StatusNotFound, "build not found")
 		return
 	}
 	writeJSON(w, http.StatusOK, detail(b))
@@ -81,7 +99,7 @@ func (a *apiServer) handleBuildDetail(w http.ResponseWriter, r *http.Request) {
 
 func (a *apiServer) handleWorkers(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	infos := a.registry.All()
@@ -204,6 +222,11 @@ func buildStateString(g *dag.Graph) string {
 		if g.IsPassed() {
 			return "passed"
 		}
+		for _, t := range g.Tasks() {
+			if t.State == dag.TaskCancelled {
+				return "cancelled"
+			}
+		}
 		return "failed"
 	}
 	for _, t := range g.Tasks() {
@@ -225,4 +248,8 @@ func writeJSON(w http.ResponseWriter, code int, body any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(body)
+}
+
+func writeJSONError(w http.ResponseWriter, code int, msg string) {
+	writeJSON(w, code, map[string]string{"error": msg})
 }

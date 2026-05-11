@@ -25,10 +25,15 @@ tasks:
   - id: clone
     image: alpine/git:latest
     commands:
-      - git config --global --add safe.directory /relay-local-repo/.git
-      - git config --global --add safe.directory /relay-local-repo
-      - git clone --depth=1 --branch $BRANCH $REPO_URL /workspace
-      - cd /workspace && git checkout $COMMIT_SHA
+      - |
+        if [ -n "$RELAY_LOCAL_REPO_PATH" ]; then
+          # Local file:// submit — copy the bind-mounted folder so the build
+          # sees uncommitted changes too. No git checkout needed.
+          cp -a /relay-local-repo/. /workspace/
+        else
+          git clone --depth=1 --branch $BRANCH $REPO_URL /workspace
+          cd /workspace && git checkout $COMMIT_SHA
+        fi
 
   - id: proto
     commands:
