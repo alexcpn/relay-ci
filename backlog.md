@@ -59,14 +59,44 @@
 - [ ] **Backup / restore** — once persistence is added, support state export and import
 - [ ] **Configuration validation CLI** — `ci validate pipeline.yaml` to catch errors before push
 
-## Priority 8: Web UI / Dashboard
+## Priority 8: Web UI / Dashboard (Angular SPA)
 
-- [ ] **Build list view** — table of recent builds with status, repo, branch, duration
-- [ ] **Build detail view** — DAG visualization with live task status updates
-- [ ] **Log viewer** — real-time streaming log viewer per task (current `/logs` endpoint is bare)
-- [ ] **Worker status page** — capacity, running tasks, health
-- [ ] **Secret management UI** — add/remove/rotate secrets via browser
-- [ ] **Pipeline editor** — YAML editor with schema validation and preview
+### Foundation
+- [ ] **Angular project scaffold** — Angular 17+ standalone components, signals, SSR off; `web/` workspace with `ng build` wired into `Makefile`
+- [ ] **HTTP/JSON gateway on master** — `grpc-gateway` v2 mounted on the existing HTTP mux (`cmd/master/main.go:125`) at `/api/v1/...`; add `google.api.http` annotations to `SchedulerService`, `SecretsService`, `LogService`, and a new `WorkerRegistry` read API; server-streaming RPCs (`WatchBuild`, `StreamLogs`) exposed as chunked JSON / SSE. Chosen over gRPC-Web because the master already serves HTTP, no bidi streams are needed from the browser, and JSON is debuggable in DevTools without an Envoy hop.
+- [ ] **Auth flow** — login screen exchanges credentials for the existing `API_TOKEN`, stored in `HttpOnly` cookie or memory; `AuthInterceptor` attaches it; 401 redirects to login
+- [ ] **App shell & routing** — top nav (Builds / Workers / Secrets / Pipelines), lazy-loaded feature modules, 404 + error boundary
+- [ ] **Theme & design system** — Angular Material or Tailwind + CDK; dark mode; consistent status color tokens (queued/running/success/failed/cancelled)
+- [ ] **Real-time channel** — SSE or WebSocket client service for live build/log/worker updates; auto-reconnect with backoff
+
+### Build views
+- [ ] **Build list view** — paginated/filterable table (status, repo, branch, commit, duration, started-by); column sort; saved filters
+- [ ] **Build detail page** — header with metadata + actions (cancel, retry, re-run task); tab layout (DAG, Tasks, Logs, Artifacts, Timeline)
+- [ ] **DAG visualization** — interactive graph (dagre-d3 or cytoscape) with live task status colors; click node → jump to that task's logs
+- [ ] **Task timeline / Gantt** — per-task start/end bars on a shared timeline to spot critical path and parallelism gaps
+- [ ] **Submit-build dialog** — form to trigger a manual build (repo, branch, commit, pipeline override, env vars)
+
+### Logs
+- [ ] **Streaming log viewer** — virtualized renderer for large logs, ANSI color, auto-scroll lock, follow-tail toggle, jump-to-error
+- [ ] **Log search & filter** — in-log substring/regex search, severity filter, permalink to a line, "copy as text" + download
+- [ ] **Multi-task log split view** — view two tasks side-by-side for comparing parallel branches
+
+### Workers
+- [ ] **Worker status page** — list of workers with capacity, running tasks, last heartbeat, labels, drain state
+- [ ] **Worker detail drawer** — live resource usage, current task assignments, drain/undrain action
+
+### Secrets
+- [ ] **Secret management UI** — list/add/remove/rotate scoped secrets; reveal-on-click behind confirmation; never display in plaintext by default
+- [ ] **Secret usage audit panel** — show which builds/pipelines referenced a secret (depends on P1 audit logging)
+
+### Pipelines
+- [ ] **Pipeline editor** — Monaco-based YAML editor with schema validation, autocomplete from pipeline schema, and live DAG preview
+- [ ] **Pipeline diff view** — visual diff between previous and proposed pipeline YAML before commit
+
+### Cross-cutting
+- [ ] **Notifications/toasts** — surface build-failed, worker-died, and auth-expired events to the active user
+- [ ] **Frontend test suite** — Karma/Jest unit tests for services and components; Playwright e2e against a real master+worker
+- [ ] **Build & deploy pipeline** — `web/` artifact served by master (embedded via `embed.FS`) or by a sidecar Nginx; cache-busting hashed filenames
 
 ## Completed
 

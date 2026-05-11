@@ -47,9 +47,10 @@ func main() {
 
 	// --- Initialize components ---
 
-	// Secrets store: load from .secrets.env (or SECRETS_FILE) on startup.
+	// Secrets store: load from .secrets.env and .env on startup.
 	secretStore := secrets.NewStore()
-	loadSecretsFile(secretStore, logger)
+	loadSecretsFile(secretStore, logger, envOrDefault("SECRETS_FILE", ".secrets.env"))
+	loadSecretsFile(secretStore, logger, envOrDefault("DOTENV_FILE", ".env"))
 
 	registry := worker.NewRegistry(30 * time.Second)
 
@@ -131,6 +132,7 @@ func main() {
 	mux.HandleFunc("/logs", func(w http.ResponseWriter, r *http.Request) {
 		handleLogsHTTP(w, r, logs)
 	})
+	newAPIServer(sched, registry).register(mux)
 
 	httpServer := &http.Server{
 		Addr:    httpAddr,
@@ -239,10 +241,8 @@ func envOrDefault(key, def string) string {
 }
 
 // loadSecretsFile parses a KEY=VALUE file and seeds the secrets store.
-// The file path defaults to ".secrets.env" but can be overridden with
-// the SECRETS_FILE environment variable. Missing file is silently ignored.
-func loadSecretsFile(store *secrets.Store, logger *slog.Logger) {
-	path := envOrDefault("SECRETS_FILE", ".secrets.env")
+// Missing files are silently ignored. Later loads overwrite earlier values.
+func loadSecretsFile(store *secrets.Store, logger *slog.Logger, path string) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return // file absent — normal for most deployments

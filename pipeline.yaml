@@ -19,6 +19,7 @@ triggers:
     - "go.mod"
     - "go.sum"
     - "Makefile"
+    - "web/**"
 
 tasks:
   - id: clone
@@ -74,6 +75,30 @@ tasks:
       - key: golangci-lint-cache
         path: /root/.cache/golangci-lint
     memory_mb: 2048
+
+  - id: web-build
+    image: node:20-alpine
+    commands:
+      - cd /workspace/web
+      - npm ci --no-audit --no-fund
+      - npm run build
+    depends_on: [clone]
+    cache:
+      - key: npm
+        path: /root/.npm
+    memory_mb: 2048
+
+  - id: web-lint
+    image: node:20-alpine
+    commands:
+      - cd /workspace/web
+      - npm ci --no-audit --no-fund
+      - npm run lint
+    depends_on: [clone]
+    cache:
+      - key: npm
+        path: /root/.npm
+    memory_mb: 1024
 
 integrations:
   security:

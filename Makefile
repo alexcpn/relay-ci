@@ -1,4 +1,4 @@
-.PHONY: proto build clean test
+.PHONY: proto build clean test web web-install web-dev
 
 PROTO_DIR := proto
 GEN_DIR := gen
@@ -23,6 +23,16 @@ build: proto
 test:
 	go test ./...
 
+# Web UI (Angular SPA in web/)
+web-install:
+	cd web && npm install
+
+web-dev:
+	cd web && npm start
+
+web:
+	cd web && npm run build
+
 # Clean generated files and binaries
 clean:
-	rm -rf $(GEN_DIR) bin/
+	rm -rf $(GEN_DIR) bin/ web/dist web/.angular
