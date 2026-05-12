@@ -3,14 +3,18 @@ package store
 import (
 	"sync"
 	"time"
+
+	"github.com/ci-system/ci/pkg/review"
 )
 
 // MemStore is a no-op in-memory Store used in tests and when no data
 // directory is configured.
 type MemStore struct {
-	mu     sync.RWMutex
-	builds map[string]*BuildRecord
-	audit  []*AuditEntry
+	mu       sync.RWMutex
+	builds   map[string]*BuildRecord
+	audit    []*AuditEntry
+	reviews  map[string]*review.ReviewRecord
+	sessions map[string]*review.SessionRecord
 }
 
 func NewMemStore() *MemStore {
@@ -115,3 +119,120 @@ func (m *MemStore) DeleteBuildsBefore(cutoff time.Time) (int64, error) {
 }
 
 func (m *MemStore) Close() error { return nil }
+
+// --- Review methods ---
+
+func (m *MemStore) SaveReview(r *review.ReviewRecord) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.reviews == nil {
+		m.reviews = make(map[string]*review.ReviewRecord)
+	}
+	cp := *r
+	m.reviews[r.ID] = &cp
+	return nil
+}
+
+func (m *MemStore) UpdateReviewState(id, state, verdict, summary string, findings []review.Finding, finishedAt time.Time, durationMs int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.reviews == nil {
+		return nil
+	}
+	r, ok := m.reviews[id]
+	if !ok {
+		return nil
+	}
+	r.State = state
+	r.Verdict = verdict
+	r.Summary = summary
+	r.FinishedAt = finishedAt
+	r.DurationMs = durationMs
+	r.Findings = append([]review.Finding{}, findings...)
+	return nil
+}
+
+func (m *MemStore) GetReview(id string) (*review.ReviewRecord, bool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.reviews == nil {
+		return nil, false, nil
+	}
+	r, ok := m.reviews[id]
+	if !ok {
+		return nil, false, nil
+	}
+	cp := *r
+	return &cp, true, nil
+}
+
+func (m *MemStore) ListReviews(sessionID string, limit int) ([]*review.ReviewRecord, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.reviews == nil {
+		return nil, nil
+	}
+	var out []*review.ReviewRecord
+	for _, r := range m.reviews {
+		if sessionID != "" && r.SessionID != sessionID {
+			continue
+		}
+		cp := *r
+		out = append(out, &cp)
+	}
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+func (m *MemStore) GetFindings(reviewID string) ([]review.Finding, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.reviews == nil {
+		return nil, nil
+	}
+	r, ok := m.reviews[reviewID]
+	if !ok {
+		return nil, nil
+	}
+	return append([]review.Finding{}, r.Findings...), nil
+}
+
+func (m *MemStore) SaveSession(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.sessions == nil {
+		m.sessions = make(map[string]*review.SessionRecord)
+	}
+	if _, ok := m.sessions[id]; !ok {
+		m.sessions[id] = &review.SessionRecord{ID: id, CreatedAt: time.Now()}
+	}
+	return nil
+}
+
+func (m *MemStore) UpdateSession(id, lastReviewID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.sessions == nil {
+		return nil
+	}
+	if s, ok := m.sessions[id]; ok {
+		s.LastReviewID = lastReviewID
+	}
+	return nil
+}
+
+func (m *MemStore) GetSession(id string) (*review.SessionRecord, bool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.sessions == nil {
+		return nil, false, nil
+	}
+	s, ok := m.sessions[id]
+	if !ok {
+		return nil, false, nil
+	}
+	cp := *s
+	return &cp, true, nil
+}

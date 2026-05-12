@@ -23,6 +23,7 @@ type executor struct {
 	secretsClient  pb.SecretsServiceClient
 	workerID       string
 	logger         *slog.Logger
+	reviewExec     *ReviewTaskExecutor
 
 	mu           sync.Mutex
 	runningTasks map[string]context.CancelFunc
@@ -41,6 +42,7 @@ func newExecutor(
 		secretsClient:  secretsClient,
 		workerID:       workerID,
 		logger:         logger,
+		reviewExec:     NewReviewTaskExecutor(logger),
 		runningTasks:   make(map[string]context.CancelFunc),
 	}
 }
@@ -100,11 +102,25 @@ func (e *executor) executeTask(ctx context.Context, req *pb.AssignTaskRequest) {
 		}
 	}
 
-	// Try Docker first, fall back to shell execution.
-	exitCode, execErr := e.runInDocker(taskCtx, req, taskID, buildID)
-	if execErr != nil && isDockerNotAvailable(execErr) {
-		e.pushLog(taskID, buildID, "[system] docker not available, falling back to shell execution", pb.LogStream_LOG_STREAM_SYSTEM)
-		exitCode, execErr = e.runInShell(taskCtx, req, taskID, buildID)
+	// Review tasks run in-process (no Docker cold-start).
+	var exitCode int
+	var execErr error
+	if IsReviewTask(req.Env) {
+		result, reviewErr := e.reviewExec.Execute(taskCtx, req.Env)
+		if reviewErr != nil {
+			exitCode = 1
+			execErr = reviewErr
+		} else {
+			// Write the JSON result as a log line so the master can read it back.
+			e.pushLog(taskID, buildID, result, pb.LogStream_LOG_STREAM_STDOUT)
+		}
+	} else {
+		// Try Docker first, fall back to shell execution.
+		exitCode, execErr = e.runInDocker(taskCtx, req, taskID, buildID)
+		if execErr != nil && isDockerNotAvailable(execErr) {
+			e.pushLog(taskID, buildID, "[system] docker not available, falling back to shell execution", pb.LogStream_LOG_STREAM_SYSTEM)
+			exitCode, execErr = e.runInShell(taskCtx, req, taskID, buildID)
+		}
 	}
 
 	duration := time.Since(startedAt)

@@ -6,7 +6,11 @@
 // a data directory is configured.
 package store
 
-import "time"
+import (
+	"time"
+
+	"github.com/ci-system/ci/pkg/review"
+)
 
 // BuildRecord is the flat, serialisable view of a build persisted in the DB.
 // It is separate from scheduler.Build so the two packages stay decoupled.
@@ -64,6 +68,18 @@ type Store interface {
 
 	// Retention
 	DeleteBuildsBefore(cutoff time.Time) (int64, error)
+
+	// Review lifecycle
+	SaveReview(r *review.ReviewRecord) error
+	UpdateReviewState(id, state, verdict, summary string, findings []review.Finding, finishedAt time.Time, durationMs int64) error
+	GetReview(id string) (*review.ReviewRecord, bool, error)
+	ListReviews(sessionID string, limit int) ([]*review.ReviewRecord, error)
+	GetFindings(reviewID string) ([]review.Finding, error)
+
+	// Session tracking
+	SaveSession(id string) error
+	UpdateSession(id, lastReviewID string) error
+	GetSession(id string) (*review.SessionRecord, bool, error)
 
 	Close() error
 }

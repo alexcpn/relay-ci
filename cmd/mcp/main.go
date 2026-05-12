@@ -309,6 +309,9 @@ func (s *mcpServer) handleToolsList(req jsonRPCRequest) *jsonRPCResponse {
 		},
 	}
 
+	// Add review tools.
+	tools = append(tools, reviewToolDefs...)
+
 	return &jsonRPCResponse{
 		JSONRPC: "2.0",
 		ID:      req.ID,
@@ -354,6 +357,14 @@ func (s *mcpServer) handleToolsCall(req jsonRPCRequest) *jsonRPCResponse {
 		result = s.toolSuggestFix(ctx, params.Arguments)
 	case "watch_build":
 		result = s.toolWatchBuild(ctx, params.Arguments)
+	case "submit_review":
+		result = s.toolSubmitReview(ctx, params.Arguments)
+	case "get_review":
+		result = s.toolGetReview(ctx, params.Arguments)
+	case "diff_reviews":
+		result = s.toolDiffReviews(ctx, params.Arguments)
+	case "list_reviews":
+		result = s.toolListReviews(ctx, params.Arguments)
 	default:
 		result = errorResult("unknown tool: " + params.Name)
 	}

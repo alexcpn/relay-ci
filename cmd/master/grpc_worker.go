@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -15,32 +16,36 @@ import (
 	"github.com/ci-system/ci/pkg/dag"
 	"github.com/ci-system/ci/pkg/logstore"
 	"github.com/ci-system/ci/pkg/observability"
+	"github.com/ci-system/ci/pkg/review"
 	"github.com/ci-system/ci/pkg/scheduler"
 	"github.com/ci-system/ci/pkg/scm"
+	"github.com/ci-system/ci/pkg/store"
 	"github.com/ci-system/ci/pkg/worker"
 )
 
 // workerRegistryServer implements the WorkerRegistryService gRPC interface.
 type workerRegistryServer struct {
 	pb.UnimplementedWorkerRegistryServiceServer
-	registry  *worker.Registry
-	sched     *scheduler.Scheduler
-	scmRouter *scm.Router
-	logs      *logstore.Store
-	disp      *dispatcher
-	logger    *slog.Logger
-	publicURL string
+	registry    *worker.Registry
+	sched       *scheduler.Scheduler
+	scmRouter   *scm.Router
+	logs        *logstore.Store
+	disp        *dispatcher
+	logger      *slog.Logger
+	publicURL   string
+	reviewStore store.Store // may be nil if store not configured
 }
 
-func newWorkerRegistryServer(reg *worker.Registry, sched *scheduler.Scheduler, scmRouter *scm.Router, logs *logstore.Store, disp *dispatcher, logger *slog.Logger, publicURL string) *workerRegistryServer {
+func newWorkerRegistryServer(reg *worker.Registry, sched *scheduler.Scheduler, scmRouter *scm.Router, logs *logstore.Store, disp *dispatcher, logger *slog.Logger, publicURL string, reviewStore store.Store) *workerRegistryServer {
 	return &workerRegistryServer{
-		registry:  reg,
-		sched:     sched,
-		scmRouter: scmRouter,
-		logs:      logs,
-		disp:      disp,
-		logger:    logger,
-		publicURL: publicURL,
+		registry:    reg,
+		sched:       sched,
+		scmRouter:   scmRouter,
+		logs:        logs,
+		disp:        disp,
+		logger:      logger,
+		publicURL:   publicURL,
+		reviewStore: reviewStore,
 	}
 }
 
@@ -186,8 +191,14 @@ func (s *workerRegistryServer) ReportTaskResult(ctx context.Context, req *pb.Rep
 	// If the build just finished, report overall status, post PR comment,
 	// and clean up workspace volumes on workers.
 	if completion.BuildID != "" {
-		go s.reportBuildCompletion(context.Background(), completion)
-		go s.cleanupBuildVolumes(context.Background(), completion.BuildID)
+		// For review builds, extract the JSON result from logstore and update
+		// the review record instead of the normal CI completion flow.
+		if taskID == review.TaskIDReviewAll {
+			go s.finaliseReview(context.Background(), buildID, taskID, taskState)
+		} else {
+			go s.reportBuildCompletion(context.Background(), completion)
+			go s.cleanupBuildVolumes(context.Background(), completion.BuildID)
+		}
 	}
 
 	s.logger.Info("task result received",
@@ -484,4 +495,44 @@ func protoToTaskState(s pb.TaskState) dag.TaskState {
 	default:
 		return dag.TaskPending
 	}
+}
+
+// finaliseReview reads the review result JSON from the logstore and writes
+// it to the review store. Called after the review-all task completes.
+func (s *workerRegistryServer) finaliseReview(ctx context.Context, reviewID, taskID string, taskState dag.TaskState) {
+	if s.reviewStore == nil {
+		return
+	}
+
+	start := time.Now()
+	var findings []review.Finding
+	verdict := "fail"
+	summary := ""
+
+	if taskState == dag.TaskPassed {
+		// Read the task's stdout log to find the ReviewResult JSON (last JSON line).
+		lines, _ := s.logs.Get(taskID, 0, 0) //nolint:staticcheck
+		for i := len(lines) - 1; i >= 0; i-- {
+			content := strings.TrimSpace(lines[i].Content)
+			if strings.HasPrefix(content, "{") {
+				var result struct {
+					Verdict  string           `json:"verdict"`
+					Summary  string           `json:"summary"`
+					Findings []review.Finding `json:"findings"`
+				}
+				if err := json.Unmarshal([]byte(content), &result); err == nil {
+					findings = result.Findings
+					verdict = result.Verdict
+					summary = result.Summary
+					break
+				}
+			}
+		}
+	}
+
+	durationMs := time.Since(start).Milliseconds()
+	if err := s.reviewStore.UpdateReviewState(reviewID, "done", verdict, summary, findings, time.Now(), durationMs); err != nil {
+		s.logger.Error("finalise review: update store", "review_id", reviewID, "err", err)
+	}
+	s.logger.Info("review finalised", "review_id", reviewID, "verdict", verdict, "findings", len(findings))
 }

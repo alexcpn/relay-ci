@@ -1,16 +1,61 @@
 package store
 
 import (
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"time"
 
+	"github.com/ci-system/ci/pkg/review"
 	_ "modernc.org/sqlite"
 )
 
 const schema = `
 PRAGMA journal_mode=WAL;
 PRAGMA foreign_keys=ON;
+
+CREATE TABLE IF NOT EXISTS reviews (
+	id           TEXT PRIMARY KEY,
+	session_id   TEXT NOT NULL DEFAULT '',
+	build_id     TEXT NOT NULL DEFAULT '',
+	state        TEXT NOT NULL DEFAULT 'pending',
+	verdict      TEXT NOT NULL DEFAULT '',
+	language     TEXT NOT NULL DEFAULT '',
+	duration_ms  INTEGER NOT NULL DEFAULT 0,
+	iteration    INTEGER NOT NULL DEFAULT 1,
+	summary      TEXT NOT NULL DEFAULT '',
+	created_at   DATETIME NOT NULL,
+	finished_at  DATETIME
+);
+
+CREATE TABLE IF NOT EXISTS findings (
+	id            TEXT NOT NULL,
+	review_id     TEXT NOT NULL REFERENCES reviews(id) ON DELETE CASCADE,
+	file          TEXT NOT NULL DEFAULT '',
+	line          INTEGER NOT NULL DEFAULT 0,
+	col           INTEGER NOT NULL DEFAULT 0,
+	severity      TEXT NOT NULL DEFAULT 'info',
+	rule          TEXT NOT NULL DEFAULT '',
+	tool          TEXT NOT NULL DEFAULT '',
+	message       TEXT NOT NULL DEFAULT '',
+	suggestion    TEXT NOT NULL DEFAULT '',
+	category      TEXT NOT NULL DEFAULT '',
+	function_name TEXT NOT NULL DEFAULT '',
+	status        TEXT NOT NULL DEFAULT 'open',
+	PRIMARY KEY (id, review_id)
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+	id             TEXT PRIMARY KEY,
+	created_at     DATETIME NOT NULL,
+	last_review_id TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS reviews_session ON reviews(session_id);
+CREATE INDEX IF NOT EXISTS reviews_created ON reviews(created_at DESC);
+CREATE INDEX IF NOT EXISTS findings_review ON findings(review_id);
 
 CREATE TABLE IF NOT EXISTS builds (
 	id            TEXT PRIMARY KEY,
@@ -255,4 +300,167 @@ func nullTime(t time.Time) any {
 		return nil
 	}
 	return t.UTC()
+}
+
+// --- Review methods ---
+
+func newID() string {
+	b := make([]byte, 8)
+	rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+func (s *SQLiteStore) SaveReview(r *review.ReviewRecord) error {
+	_, err := s.db.Exec(`
+		INSERT OR IGNORE INTO reviews
+			(id,session_id,build_id,state,verdict,language,duration_ms,iteration,summary,created_at,finished_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+		r.ID, r.SessionID, r.BuildID, r.State, r.Verdict, r.Language,
+		r.DurationMs, r.Iteration, r.Summary,
+		r.CreatedAt.UTC(), nullTime(r.FinishedAt),
+	)
+	return err
+}
+
+func (s *SQLiteStore) UpdateReviewState(id, state, verdict, summary string, findings []review.Finding, finishedAt time.Time, durationMs int64) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`UPDATE reviews SET state=?,verdict=?,summary=?,finished_at=?,duration_ms=? WHERE id=?`,
+		state, verdict, summary, nullTime(finishedAt), durationMs, id); err != nil {
+		return err
+	}
+
+	for _, f := range findings {
+		if f.ID == "" {
+			f.ID = newID()
+		}
+		if _, err := tx.Exec(`
+			INSERT INTO findings (id,review_id,file,line,col,severity,rule,tool,message,suggestion,category,function_name,status)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+			ON CONFLICT(id,review_id) DO UPDATE SET
+				severity=excluded.severity, message=excluded.message,
+				suggestion=excluded.suggestion, status=excluded.status`,
+			f.ID, id, f.File, f.Line, f.Col,
+			string(f.Severity), f.Rule, f.Tool, f.Message, f.Suggestion,
+			string(f.Category), f.FunctionName, f.Status,
+		); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *SQLiteStore) GetReview(id string) (*review.ReviewRecord, bool, error) {
+	row := s.db.QueryRow(`
+		SELECT id,session_id,build_id,state,verdict,language,duration_ms,iteration,summary,created_at,finished_at
+		FROM reviews WHERE id=?`, id)
+	r, err := scanReview(row)
+	if err == sql.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	findings, err := s.GetFindings(id)
+	if err != nil {
+		return nil, false, err
+	}
+	r.Findings = findings
+	return r, true, nil
+}
+
+func (s *SQLiteStore) ListReviews(sessionID string, limit int) ([]*review.ReviewRecord, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	var rows *sql.Rows
+	var err error
+	if sessionID != "" {
+		rows, err = s.db.Query(`SELECT id,session_id,build_id,state,verdict,language,duration_ms,iteration,summary,created_at,finished_at
+			FROM reviews WHERE session_id=? ORDER BY created_at DESC LIMIT ?`, sessionID, limit)
+	} else {
+		rows, err = s.db.Query(`SELECT id,session_id,build_id,state,verdict,language,duration_ms,iteration,summary,created_at,finished_at
+			FROM reviews ORDER BY created_at DESC LIMIT ?`, limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*review.ReviewRecord
+	for rows.Next() {
+		r, err := scanReview(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *SQLiteStore) GetFindings(reviewID string) ([]review.Finding, error) {
+	rows, err := s.db.Query(`
+		SELECT id,review_id,file,line,col,severity,rule,tool,message,suggestion,category,function_name,status
+		FROM findings WHERE review_id=? ORDER BY severity DESC, line ASC`, reviewID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []review.Finding
+	for rows.Next() {
+		var f review.Finding
+		var sev, cat string
+		if err := rows.Scan(&f.ID, &f.ReviewID, &f.File, &f.Line, &f.Col,
+			&sev, &f.Rule, &f.Tool, &f.Message, &f.Suggestion, &cat, &f.FunctionName, &f.Status); err != nil {
+			return nil, err
+		}
+		f.Severity = review.Severity(sev)
+		f.Category = review.Category(cat)
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+func (s *SQLiteStore) SaveSession(id string) error {
+	_, err := s.db.Exec(`INSERT OR IGNORE INTO sessions (id,created_at,last_review_id) VALUES (?,?,?)`,
+		id, time.Now().UTC(), "")
+	return err
+}
+
+func (s *SQLiteStore) UpdateSession(id, lastReviewID string) error {
+	_, err := s.db.Exec(`UPDATE sessions SET last_review_id=? WHERE id=?`, lastReviewID, id)
+	return err
+}
+
+func (s *SQLiteStore) GetSession(id string) (*review.SessionRecord, bool, error) {
+	row := s.db.QueryRow(`SELECT id,created_at,last_review_id FROM sessions WHERE id=?`, id)
+	s2 := &review.SessionRecord{}
+	if err := row.Scan(&s2.ID, &s2.CreatedAt, &s2.LastReviewID); err == sql.ErrNoRows {
+		return nil, false, nil
+	} else if err != nil {
+		return nil, false, err
+	}
+	return s2, true, nil
+}
+
+func scanReview(row scanner) (*review.ReviewRecord, error) {
+	r := &review.ReviewRecord{}
+	var finishedAt sql.NullTime
+	err := row.Scan(&r.ID, &r.SessionID, &r.BuildID, &r.State, &r.Verdict,
+		&r.Language, &r.DurationMs, &r.Iteration, &r.Summary, &r.CreatedAt, &finishedAt)
+	if err != nil {
+		return nil, err
+	}
+	if finishedAt.Valid {
+		r.FinishedAt = finishedAt.Time
+	}
+	return r, nil
+}
+
+// findingsJSON serialises findings for logging (used by review tasks).
+func findingsJSON(findings []review.Finding) ([]byte, error) {
+	return json.Marshal(findings)
 }

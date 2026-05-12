@@ -109,7 +109,7 @@ func main() {
 
 	// Create the worker registry server first so the scheduler dispatch
 	// callback can call reportTaskStatus on it (for per-task pending statuses).
-	workerSrv := newWorkerRegistryServer(registry, nil, router, logs, disp, logger, publicURL)
+	workerSrv := newWorkerRegistryServer(registry, nil, router, logs, disp, logger, publicURL, buildStore)
 
 	// Scheduler calls dispatcher when assigning tasks and posts a per-task
 	// "pending" status to the SCM provider.
@@ -159,7 +159,9 @@ func main() {
 	mux.HandleFunc("/logs", func(w http.ResponseWriter, r *http.Request) {
 		handleLogsHTTP(w, r, logs)
 	})
-	newAPIServer(sched, registry, buildStore).register(mux)
+	apiSrv := newAPIServer(sched, registry, buildStore)
+	apiSrv.register(mux)
+	newReviewServer(apiSrv, sched, buildStore).register(mux)
 
 	httpServer := &http.Server{
 		Addr:    httpAddr,
