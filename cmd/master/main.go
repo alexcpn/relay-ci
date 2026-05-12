@@ -22,6 +22,7 @@ import (
 	"github.com/ci-system/ci/pkg/scheduler"
 	"github.com/ci-system/ci/pkg/scm"
 	"github.com/ci-system/ci/pkg/secrets"
+	"github.com/ci-system/ci/pkg/store"
 	"github.com/ci-system/ci/pkg/tlsutil"
 	"github.com/ci-system/ci/pkg/worker"
 )
@@ -51,6 +52,29 @@ func main() {
 	secretStore := secrets.NewStore()
 	loadSecretsFile(secretStore, logger, envOrDefault("SECRETS_FILE", ".secrets.env"))
 	loadSecretsFile(secretStore, logger, envOrDefault("DOTENV_FILE", ".env"))
+
+	// --- Persistent store (SQLite) ---
+	// DB_PATH configures the SQLite file. If unset, falls back to
+	// <DATA_ROOT>/relay-ci.db. Set DB_PATH=":memory:" to disable persistence.
+	dbPath := envOrDefault("DB_PATH", dataRoot+"/relay-ci.db")
+	var buildStore store.Store
+	if dbPath == ":memory:" {
+		buildStore = store.NewMemStore()
+		logger.Info("build store: in-memory (no persistence)")
+	} else {
+		if err := os.MkdirAll(dataRoot, 0o750); err != nil {
+			logger.Error("failed to create data dir", "path", dataRoot, "err", err)
+			os.Exit(1)
+		}
+		sqliteStore, err := store.Open(dbPath)
+		if err != nil {
+			logger.Error("failed to open build store", "path", dbPath, "err", err)
+			os.Exit(1)
+		}
+		buildStore = sqliteStore
+		logger.Info("build store: SQLite", "path", dbPath)
+	}
+	defer buildStore.Close()
 
 	registry := worker.NewRegistry(30 * time.Second)
 
@@ -95,6 +119,7 @@ func main() {
 		return disp.dispatch(a)
 	}, logger)
 	workerSrv.sched = sched // wire back after creation
+	sched.SetStore(buildStore)
 
 	// --- gRPC server ---
 
@@ -115,7 +140,8 @@ func main() {
 		)
 	}
 	grpcServer := grpc.NewServer(grpcOpts...)
-	pb.RegisterSchedulerServiceServer(grpcServer, newSchedulerServer(sched, router, verifySrv))
+	audit := newAuditor(buildStore, logger)
+	pb.RegisterSchedulerServiceServer(grpcServer, newSchedulerServer(sched, router, verifySrv, audit))
 	pb.RegisterWorkerRegistryServiceServer(grpcServer, workerSrv)
 	pb.RegisterLogServiceServer(grpcServer, newLogServer(logs))
 	pb.RegisterSecretsServiceServer(grpcServer, newSecretsServer(secretStore))
@@ -123,7 +149,8 @@ func main() {
 	// --- HTTP server (webhooks + log viewer) ---
 
 	mux := http.NewServeMux()
-	mux.Handle("/webhooks", newWebhookHandler(router, sched, logger, webhookSecret, secretStore, publicURL))
+	webhookRL := newRateLimiterFromEnv()
+	mux.Handle("/webhooks", webhookRL.Middleware(newWebhookHandler(router, sched, logger, webhookSecret, secretStore, publicURL)))
 	mux.Handle("/metrics", promhttp.Handler())
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -132,7 +159,7 @@ func main() {
 	mux.HandleFunc("/logs", func(w http.ResponseWriter, r *http.Request) {
 		handleLogsHTTP(w, r, logs)
 	})
-	newAPIServer(sched, registry).register(mux)
+	newAPIServer(sched, registry, buildStore).register(mux)
 
 	httpServer := &http.Server{
 		Addr:    httpAddr,
@@ -149,6 +176,9 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// --- Build retention ---
+	go runRetentionLoop(ctx, buildStore, logger)
 
 	go func() {
 		ticker := time.NewTicker(500 * time.Millisecond)

@@ -8,8 +8,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ci-system/ci/pkg/auth"
 	"github.com/ci-system/ci/pkg/dag"
 	"github.com/ci-system/ci/pkg/scheduler"
+	"github.com/ci-system/ci/pkg/store"
 	"github.com/ci-system/ci/pkg/worker"
 )
 
@@ -20,10 +22,12 @@ import (
 type apiServer struct {
 	sched         *scheduler.Scheduler
 	registry      *worker.Registry
+	store         store.Store
 	allowedOrigin string // exact value sent in Access-Control-Allow-Origin
+	apiToken      string // empty = auth disabled
 }
 
-func newAPIServer(sched *scheduler.Scheduler, registry *worker.Registry) *apiServer {
+func newAPIServer(sched *scheduler.Scheduler, registry *worker.Registry, st store.Store) *apiServer {
 	// CORS_ALLOW_ORIGIN: a single allowed origin, or "*" for any. Defaults to
 	// "*" for dev ergonomics; production deployments should pin it.
 	origin := os.Getenv("CORS_ALLOW_ORIGIN")
@@ -33,7 +37,9 @@ func newAPIServer(sched *scheduler.Scheduler, registry *worker.Registry) *apiSer
 	return &apiServer{
 		sched:         sched,
 		registry:      registry,
+		store:         st,
 		allowedOrigin: origin,
+		apiToken:      auth.TokenFromEnv(),
 	}
 }
 
@@ -41,6 +47,7 @@ func (a *apiServer) register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/builds", a.withCORS(a.handleBuilds))
 	mux.HandleFunc("/api/v1/builds/", a.withCORS(a.handleBuildDetail))
 	mux.HandleFunc("/api/v1/workers", a.withCORS(a.handleWorkers))
+	mux.HandleFunc("/api/v1/audit", a.withCORS(a.handleAudit))
 }
 
 func (a *apiServer) withCORS(h http.HandlerFunc) http.HandlerFunc {
@@ -53,6 +60,15 @@ func (a *apiServer) withCORS(h http.HandlerFunc) http.HandlerFunc {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
+		// Auth check — skip if no token configured (dev mode).
+		if a.apiToken != "" {
+			bearer := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+			bearer = strings.TrimPrefix(bearer, "bearer ")
+			if bearer != a.apiToken {
+				writeJSONError(w, http.StatusUnauthorized, "invalid or missing token")
+				return
+			}
+		}
 		h(w, r)
 	}
 }
@@ -62,11 +78,26 @@ func (a *apiServer) handleBuilds(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	builds := a.sched.ListBuilds()
-	out := make([]buildSummary, 0, len(builds))
-	for _, b := range builds {
+
+	// Active builds from memory (live state).
+	activeBuilds := a.sched.ListBuilds()
+	seen := make(map[string]bool, len(activeBuilds))
+	out := make([]buildSummary, 0, len(activeBuilds)+64)
+	for _, b := range activeBuilds {
 		out = append(out, summarize(b))
+		seen[b.ID] = true
 	}
+
+	// Historical builds from the store (completed, not in memory any more).
+	if historical, err := a.sched.StoreListBuilds(500); err == nil {
+		for _, rec := range historical {
+			if seen[rec.ID] {
+				continue
+			}
+			out = append(out, summarizeRecord(rec))
+		}
+	}
+
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].CreatedAt.After(out[j].CreatedAt)
 	})
@@ -89,12 +120,38 @@ func (a *apiServer) handleBuildDetail(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusNotFound, "not found")
 		return
 	}
-	b, ok := a.sched.GetBuild(rest)
+	// Try live in-memory first; fall back to the store for completed builds.
+	if b, ok := a.sched.GetBuild(rest); ok {
+		writeJSON(w, http.StatusOK, detail(b))
+		return
+	}
+	rec, ok, err := a.sched.StoreGetBuild(rest)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "store error")
+		return
+	}
 	if !ok {
 		writeJSONError(w, http.StatusNotFound, "build not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, detail(b))
+	writeJSON(w, http.StatusOK, detailFromRecord(rec))
+}
+
+func (a *apiServer) handleAudit(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if a.store == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"entries": []any{}})
+		return
+	}
+	entries, err := a.store.ListAudit(200)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "store error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"entries": entries})
 }
 
 func (a *apiServer) handleWorkers(w http.ResponseWriter, r *http.Request) {
@@ -207,6 +264,51 @@ func detail(b *scheduler.Build) buildDetail {
 			ExitCode:   t.ExitCode,
 			Error:      t.ErrorMessage,
 			DependsOn:  b.Graph.Dependencies(t.ID),
+			StartedAt:  timeOrNil(t.StartedAt),
+			FinishedAt: timeOrNil(t.FinishedAt),
+		})
+	}
+	return d
+}
+
+func summarizeRecord(r *store.BuildRecord) buildSummary {
+	s := buildSummary{
+		ID:           r.ID,
+		State:        r.State,
+		RepoFullName: r.RepoFullName,
+		RepoURL:      r.RepoURL,
+		Branch:       r.Branch,
+		CommitSHA:    r.CommitSHA,
+		PRNumber:     r.PRNumber,
+		TriggeredBy:  r.TriggeredBy,
+		CreatedAt:    r.CreatedAt,
+		StartedAt:    timeOrNil(r.StartedAt),
+		FinishedAt:   timeOrNil(r.FinishedAt),
+	}
+	for _, t := range r.Tasks {
+		s.TaskCount++
+		switch t.State {
+		case "passed":
+			s.TasksPassed++
+		case "failed", "timed_out":
+			s.TasksFailed++
+		case "running", "scheduled":
+			s.TasksRunning++
+		}
+	}
+	return s
+}
+
+func detailFromRecord(r *store.BuildRecord) buildDetail {
+	d := buildDetail{buildSummary: summarizeRecord(r)}
+	for _, t := range r.Tasks {
+		d.Tasks = append(d.Tasks, taskView{
+			ID:         t.ID,
+			Name:       t.Name,
+			State:      t.State,
+			ExitCode:   t.ExitCode,
+			Error:      t.ErrorMessage,
+			DependsOn:  []string{},
 			StartedAt:  timeOrNil(t.StartedAt),
 			FinishedAt: timeOrNil(t.FinishedAt),
 		})

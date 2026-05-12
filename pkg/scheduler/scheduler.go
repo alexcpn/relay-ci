@@ -9,6 +9,7 @@ import (
 
 	"github.com/ci-system/ci/pkg/dag"
 	"github.com/ci-system/ci/pkg/scm"
+	"github.com/ci-system/ci/pkg/store"
 	"github.com/ci-system/ci/pkg/worker"
 )
 
@@ -60,6 +61,7 @@ type Scheduler struct {
 	registry *worker.Registry
 	assignFn func(TaskAssignment) error // callback when task is assigned
 	logger   *slog.Logger
+	store    store.Store // nil = mem-only (no persistence)
 
 	// taskWorker tracks which worker is running which task (taskID -> workerID).
 	taskWorker map[string]string
@@ -76,15 +78,18 @@ func New(registry *worker.Registry, assignFn func(TaskAssignment) error, logger 
 		logger = slog.Default()
 	}
 	return &Scheduler{
-		builds:     make(map[string]*Build),
-		registry:   registry,
-		assignFn:   assignFn,
-		logger:     logger,
+		builds:       make(map[string]*Build),
+		registry:     registry,
+		assignFn:     assignFn,
+		logger:       logger,
 		taskWorker:   make(map[string]string),
 		taskBuild:    make(map[string]string),
 		buildWorkers: make(map[string]map[string]bool),
 	}
 }
+
+// SetStore attaches a persistent store. Must be called before SubmitBuild.
+func (s *Scheduler) SetStore(st store.Store) { s.store = st }
 
 // SubmitBuild adds a new build to the scheduler. The graph must already
 // be validated. Returns error if the build ID already exists.
@@ -102,6 +107,12 @@ func (s *Scheduler) SubmitBuild(build *Build) error {
 	// Index task -> build mapping.
 	for _, task := range build.Graph.Tasks() {
 		s.taskBuild[task.ID] = build.ID
+	}
+
+	if s.store != nil {
+		if err := s.store.SaveBuild(buildToRecord(build, "queued")); err != nil {
+			s.logger.Error("store: save build", "build_id", build.ID, "err", err)
+		}
 	}
 
 	s.logger.Info("build submitted", "build_id", build.ID, "tasks", build.Graph.Size())
@@ -229,6 +240,12 @@ func (s *Scheduler) HandleTaskResult(result TaskResultReport) (BuildCompletion, 
 		"newly_ready", len(newlyReady),
 	)
 
+	if s.store != nil {
+		if err := s.store.UpdateTaskState(taskToRecord(task, result.BuildID)); err != nil {
+			s.logger.Error("store: update task", "task_id", task.ID, "err", err)
+		}
+	}
+
 	// Check if build is done.
 	if build.Graph.IsComplete() {
 		build.FinishedAt = time.Now()
@@ -236,6 +253,11 @@ func (s *Scheduler) HandleTaskResult(result TaskResultReport) (BuildCompletion, 
 		state := "passed"
 		if !passed {
 			state = "failed"
+		}
+		if s.store != nil {
+			if err := s.store.UpdateBuildState(build.ID, state, build.FinishedAt); err != nil {
+				s.logger.Error("store: update build state", "build_id", build.ID, "err", err)
+			}
 		}
 		s.logger.Info("build complete",
 			"build_id", build.ID,
@@ -268,6 +290,11 @@ func (s *Scheduler) CancelBuild(buildID string) error {
 
 	build.Graph.Cancel()
 	build.FinishedAt = time.Now()
+	if s.store != nil {
+		if err := s.store.UpdateBuildState(buildID, "cancelled", build.FinishedAt); err != nil {
+			s.logger.Error("store: cancel build", "build_id", buildID, "err", err)
+		}
+	}
 	s.logger.Info("build cancelled", "build_id", buildID)
 	return nil
 }
@@ -377,4 +404,61 @@ func (s *Scheduler) pickWorker(task *dag.Task) (string, error) {
 	}
 
 	return bestWorker.ID, nil
+}
+
+// --- store helpers ---
+
+// StoreListBuilds returns historical builds from the persistent store,
+// supplemented by any active in-memory builds that aren't yet in the DB.
+// Returns nil if no store is configured.
+func (s *Scheduler) StoreListBuilds(limit int) ([]*store.BuildRecord, error) {
+	if s.store == nil {
+		return nil, nil
+	}
+	return s.store.ListBuilds(limit)
+}
+
+// StoreGetBuild returns a build record from the persistent store.
+// Returns (nil, false, nil) when the store is not configured or the build
+// is not found.
+func (s *Scheduler) StoreGetBuild(id string) (*store.BuildRecord, bool, error) {
+	if s.store == nil {
+		return nil, false, nil
+	}
+	return s.store.GetBuild(id)
+}
+
+func buildToRecord(b *Build, state string) *store.BuildRecord {
+	r := &store.BuildRecord{
+		ID:           b.ID,
+		RepoURL:      b.RepoURL,
+		RepoFullName: b.RepoFullName,
+		CommitSHA:    b.CommitSHA,
+		Branch:       b.Branch,
+		PRNumber:     b.PRNumber,
+		TriggeredBy:  b.TriggeredBy,
+		State:        state,
+		CreatedAt:    b.CreatedAt,
+		StartedAt:    b.StartedAt,
+		FinishedAt:   b.FinishedAt,
+	}
+	if b.Graph != nil {
+		for _, t := range b.Graph.Tasks() {
+			r.Tasks = append(r.Tasks, *taskToRecord(t, b.ID))
+		}
+	}
+	return r
+}
+
+func taskToRecord(t *dag.Task, buildID string) *store.TaskRecord {
+	return &store.TaskRecord{
+		ID:           t.ID,
+		BuildID:      buildID,
+		Name:         t.Name,
+		State:        t.State.String(),
+		ExitCode:     t.ExitCode,
+		ErrorMessage: t.ErrorMessage,
+		StartedAt:    t.StartedAt,
+		FinishedAt:   t.FinishedAt,
+	}
 }

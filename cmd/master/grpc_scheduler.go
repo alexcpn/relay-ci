@@ -29,10 +29,11 @@ type schedulerServer struct {
 	sched     *scheduler.Scheduler
 	scmRouter *scm.Router
 	verify    *verifyServer // nil if local verify is disabled
+	audit     *auditor
 }
 
-func newSchedulerServer(sched *scheduler.Scheduler, scmRouter *scm.Router, verify *verifyServer) *schedulerServer {
-	return &schedulerServer{sched: sched, scmRouter: scmRouter, verify: verify}
+func newSchedulerServer(sched *scheduler.Scheduler, scmRouter *scm.Router, verify *verifyServer, audit *auditor) *schedulerServer {
+	return &schedulerServer{sched: sched, scmRouter: scmRouter, verify: verify, audit: audit}
 }
 
 func (s *schedulerServer) SubmitBuild(ctx context.Context, req *pb.SubmitBuildRequest) (*pb.SubmitBuildResponse, error) {
@@ -86,6 +87,7 @@ func (s *schedulerServer) SubmitBuild(ctx context.Context, req *pb.SubmitBuildRe
 		return nil, status.Errorf(codes.AlreadyExists, "%v", err)
 	}
 	observability.BuildsInProgress.Inc()
+	s.audit.BuildSubmit(req.TriggeredBy, buildID, req.Source.RepoUrl)
 
 	return &pb.SubmitBuildResponse{
 		BuildId: &pb.BuildID{Id: buildID},
@@ -176,6 +178,7 @@ func (s *schedulerServer) CancelBuild(ctx context.Context, req *pb.CancelBuildRe
 	if err := s.sched.CancelBuild(req.BuildId.Id); err != nil {
 		return nil, status.Errorf(codes.NotFound, "%v", err)
 	}
+	s.audit.BuildCancel("api", req.BuildId.Id)
 
 	// Report cancellation to SCM if the build had a token.
 	if hasBuild && build.SCMToken != "" && build.CommitSHA != "" && build.RepoFullName != "" {

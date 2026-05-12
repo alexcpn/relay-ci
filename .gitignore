@@ -3,3 +3,6 @@ bin/*
 /.run/*
 .secrets.env
 .certs/
+
+# stray binary
+master
