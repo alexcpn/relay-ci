@@ -130,11 +130,14 @@ func ParseESLint(data []byte, reviewID string) ([]Finding, error) {
 	var findings []Finding
 	for _, ef := range files {
 		for _, msg := range ef.Messages {
-			sev := SeverityMedium
-			if msg.Severity == 2 {
+			var sev Severity
+			switch msg.Severity {
+			case 2:
 				sev = SeverityHigh
-			} else if msg.Severity == 1 {
+			case 1:
 				sev = SeverityLow
+			default:
+				sev = SeverityMedium
 			}
 			f := Finding{
 				ReviewID: reviewID,

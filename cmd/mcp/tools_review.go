@@ -191,8 +191,6 @@ func (s *mcpServer) toolGetReview(ctx context.Context, args json.RawMessage) *mc
 		return textResult(fmt.Sprintf("Review %s is **%s** — call `get_review` again to check for updates.", params.ReviewID, rec.State))
 	}
 
-	var sb fmt.Stringer
-	type writer struct{ b []byte }
 	w := &struct{ s string }{}
 	appendf := func(format string, a ...any) { w.s += fmt.Sprintf(format, a...) }
 
@@ -215,7 +213,6 @@ func (s *mcpServer) toolGetReview(ctx context.Context, args json.RawMessage) *mc
 			}
 		}
 	}
-	_ = sb
 	return textResult(w.s)
 }
 

@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -460,7 +459,3 @@ func scanReview(row scanner) (*review.ReviewRecord, error) {
 	return r, nil
 }
 
-// findingsJSON serialises findings for logging (used by review tasks).
-func findingsJSON(findings []review.Finding) ([]byte, error) {
-	return json.Marshal(findings)
-}
